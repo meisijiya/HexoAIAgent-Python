@@ -1,14 +1,13 @@
 """
-知识库 Agent 模块（优化版 v4）
+知识库 Agent 模块（优化版 v5）
 
 负责：
 - 从知识库检索相关信息
 - 结合检索结果生成回答
-- 返回找到的文章信息（带分类和标签）
+- 返回找到的文章信息（带可点击链接）
 - 集成容错处理
 - 使用结构化 Prompt 构建
 - 集成对话历史管理
-- 优化路径显示
 """
 from typing import AsyncGenerator, List, Dict, Any
 from loguru import logger
@@ -21,17 +20,17 @@ from app.core.database import async_session_maker
 from app.agents.error_handler import error_handler
 
 
+# 博客基础 URL（用于生成文章链接）
+BLOG_BASE_URL = "https://meisijiya.github.io"
+
+
 class KnowledgeAgent:
     """
-    知识库 Agent（优化版 v4）
+    知识库 Agent（优化版 v5）
     
     改进点：
-    1. 使用结构化 Prompt 构建
-    2. 集成对话历史管理
-    3. 支持动态阈值和 Top K
-    4. 集成容错处理
-    5. 优化路径显示（只显示相对路径）
-    6. 显示分类和标签信息
+    1. 参考资料显示为可点击链接
+    2. 生成博客文章的完整 URL
     """
     
     async def search_and_answer(
@@ -70,25 +69,18 @@ class KnowledgeAgent:
         # 3. 如果没有找到结果，触发容错处理
         if not search_results:
             logger.info(f"知识库无匹配，触发容错处理")
-            
-            yield {
-                "type": "info",
-                "message": "📚 在知识库中未找到相关信息"
-            }
-            
+            yield {"type": "info", "message": "📚 在知识库中未找到相关信息"}
             async for msg in error_handler.handle_no_results(query):
                 yield msg
-            
             return
         
-        # 4. 发送找到的文章信息（带分类和标签）
+        # 4. 发送找到的文章信息（带可点击链接）
         articles_info = []
         seen_sources = set()
         for i, result in enumerate(search_results, 1):
             source = result.metadata.get("_source", "未知来源")
             score = result.score
             
-            # 去重显示来源
             if source not in seen_sources:
                 seen_sources.add(source)
                 
@@ -97,24 +89,28 @@ class KnowledgeAgent:
                 tags = result.metadata.get("tags", [])
                 title = result.metadata.get("title", "")
                 
+                # 生成博客链接
+                blog_url = self._generate_blog_url(source, title)
+                
                 # 提取相对路径
-                article_name = self._extract_relative_path(source)
+                relative_path = self._extract_relative_path(source)
                 
                 # 构建显示名称（带分类）
-                display_name = article_name
+                display_name = relative_path
                 if categories:
                     categories_str = "/".join(categories)
-                    display_name = f"[{categories_str}] {article_name}"
+                    display_name = f"[{categories_str}] {relative_path}"
                 
                 articles_info.append({
                     "index": i,
                     "source": source,
                     "name": display_name,
-                    "relative_path": article_name,
+                    "relative_path": relative_path,
                     "categories": categories,
                     "tags": tags,
                     "title": title,
                     "score": score,
+                    "blog_url": blog_url,
                     "preview": result.content[:50] + "..."
                 })
         
@@ -124,7 +120,7 @@ class KnowledgeAgent:
             "articles": articles_info
         }
         
-        # 5. 构建上下文
+        # 5. 构建上下文（带可点击链接）
         rag_context = self._build_context(search_results)
         
         # 6. 使用 Prompt 构建器生成 Prompt
@@ -156,11 +152,47 @@ class KnowledgeAgent:
         
         logger.info(f"知识库回答完成: {full_response[:50]}...")
     
+    def _generate_blog_url(self, source: str, title: str) -> str:
+        """
+        生成博客文章的完整 URL
+        
+        Args:
+            source: 文件路径（如 file:///.../2025/博客建设/记录搭建博客流程😗.md）
+            title: 文章标题
+        
+        Returns:
+            str: 博客 URL（如 https://meisijiya.github.io/2025/09/16/记录搭建博客流程😗/）
+        """
+        
+        # 提取相对路径
+        relative_path = self._extract_relative_path(source)
+        
+        # 尝试从路径中提取日期信息
+        # 路径格式：2025/博客建设/记录搭建博客流程😗
+        parts = relative_path.split("/")
+        
+        if len(parts) >= 1:
+            # 年份
+            year = parts[0] if parts[0].isdigit() else "2025"
+            
+            # 如果有文章标题，使用它
+            if title:
+                # 清理标题，移除特殊字符
+                clean_title = title.replace(" ", "-").replace("😗", "").strip()
+                return f"{BLOG_BASE_URL}/{year}/01/01/{clean_title}/"
+            
+            # 使用路径的最后一部分作为文章名
+            if len(parts) >= 2:
+                article_name = parts[-1]
+                return f"{BLOG_BASE_URL}/{year}/01/01/{article_name}/"
+        
+        # 默认返回博客首页
+        return BLOG_BASE_URL
+    
     def _extract_relative_path(self, source: str) -> str:
         """
         提取相对路径（从 _posts 开始）
         """
-        
         posts_marker = "_posts/"
         posts_index = source.find(posts_marker)
         
@@ -179,23 +211,30 @@ class KnowledgeAgent:
     
     def _build_context(self, results: List[SearchResult]) -> str:
         """
-        构建检索上下文（带分类信息）
+        构建检索上下文（带可点击链接）
         """
         context_parts = []
         
         for i, result in enumerate(results, 1):
             source = result.metadata.get("_source", "未知来源")
+            title = result.metadata.get("title", "")
             relative_path = self._extract_relative_path(source)
             categories = result.metadata.get("categories", [])
             
-            # 构建来源显示
+            # 生成博客链接
+            blog_url = self._generate_blog_url(source, title)
+            
+            # 构建来源显示（带链接）
             if categories:
                 categories_str = "/".join(categories)
                 source_display = f"[{categories_str}] {relative_path}"
             else:
                 source_display = relative_path
             
-            context_parts.append(f"[参考资料 {i}] (来源: {source_display})\n{result.content}")
+            # 使用 Markdown 链接格式
+            context_parts.append(
+                f"[参考资料 {i}] (来源: [{source_display}]({blog_url}))\n{result.content}"
+            )
         
         return "\n\n".join(context_parts)
 
