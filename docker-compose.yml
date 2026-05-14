@@ -50,7 +50,7 @@ services:
       dockerfile: Dockerfile
     container_name: hexo-agent-service
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/hexo_agent
       - REDIS_URL=redis://redis:6379/0

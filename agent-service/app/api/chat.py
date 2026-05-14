@@ -5,6 +5,7 @@
 """
 import json
 from datetime import datetime
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,14 +27,14 @@ router = APIRouter(prefix="/api/chat", tags=["对话"])
 class ChatRequest(BaseModel):
     """对话请求模型"""
     message: str
-    session_id: str = None
+    session_id: Optional[str] = None
     token: str
 
 
 class CreateSessionRequest(BaseModel):
     """创建会话请求模型"""
     token: str
-    title: str = None
+    title: Optional[str] = None
 
 
 @router.post("")
@@ -67,7 +68,9 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         )
         db.add(session)
         await db.commit()
+        await db.refresh(session)
         session_id = str(session.id)
+        logger.info(f"创建新会话: {session_id}")
     else:
         # 验证会话存在且属于当前用户
         result = await db.execute(
@@ -99,14 +102,14 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             yield f"data: {json.dumps({'content': chunk})}\n\n"
         
         # 保存助手回复到数据库
-        async with db.begin():
-            assistant_message = Message(
-                session_id=session_id,
-                role="assistant",
-                content=full_response,
-                agent_type="chat"
-            )
-            db.add(assistant_message)
+        assistant_message = Message(
+            session_id=session_id,
+            role="assistant",
+            content=full_response,
+            agent_type="chat"
+        )
+        db.add(assistant_message)
+        await db.commit()
         
         # 发送完成信号
         yield f"data: {json.dumps({'done': True, 'session_id': session_id})}\n\n"
