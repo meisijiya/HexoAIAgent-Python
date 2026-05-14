@@ -177,7 +177,7 @@ class ErrorHandler:
         # 添加免责声明
         yield {
             "type": "content", 
-            "\n\n⚠️ *以上回答基于 AI 的通用知识，可能不够准确。建议查阅官方文档获取权威信息。*"
+            "content": "\n\n⚠️ *以上回答基于 AI 的通用知识，可能不够准确。建议查阅官方文档获取权威信息。*"
         }
     
     async def _suggest_rephrasing(self, query: str) -> List[str]:
