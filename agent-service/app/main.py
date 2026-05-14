@@ -14,6 +14,7 @@ from loguru import logger
 
 from app.config import settings
 from app.core.database import init_db, close_db
+from app.core.redis import init_redis, close_redis
 
 
 @asynccontextmanager
@@ -32,14 +33,15 @@ async def lifespan(app: FastAPI):
     # 初始化数据库（创建表）
     await init_db()
     
-    # TODO: 初始化 Redis 连接
+    # 初始化 Redis
+    await init_redis()
     
     yield
     
     # ========== 关闭 ==========
     logger.info("👋 关闭 Hexo Agent Service...")
     await close_db()
-    # TODO: 关闭 Redis 连接
+    await close_redis()
 
 
 # 创建 FastAPI 应用
