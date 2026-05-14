@@ -1,13 +1,13 @@
 """
-Agent 调度器模块（支持 ReAct）
+Agent 调度器模块（优化版）
 
 负责：
-- 分析用户意图
+- 分析用户意图（优化：快速判断优先，减少 LLM 调用）
 - 路由到合适的 Agent
 - 协调多个 Agent 协作
 - 支持 ReAct 模式（思考-行动-观察循环）
 """
-from typing import AsyncGenerator, Dict, Any
+from typing import AsyncGenerator, Dict, Any, Optional
 from enum import Enum
 from loguru import logger
 
@@ -34,14 +34,14 @@ AGENT_NAMES = {
     AgentType.REACT: "ReAct Agent",
 }
 
-# 意图分析提示词
+# LLM 意图分析提示词（仅在快速判断无法确定时使用）
 INTENT_PROMPT = """你是一个意图分析助手。根据用户的消息，判断应该使用哪个 Agent 来回答。
 
 Agent 类型：
-- chat: 普通对话、闲聊、通用问题
-- knowledge: 关于 Hexo 博客、技术文档、教程相关的问题
-- search: 需要最新信息、实时数据、或者明确要求搜索的问题
-- react: 需要多步推理、工具调用、复杂分析的问题
+- chat: 普通对话、闲聊、通用知识问题
+- knowledge: 关于具体技术文档、项目相关、需要引用资料的问题
+- search: 需要最新信息、实时数据、明确要求搜索的问题
+- react: 需要多步推理、对比分析、复杂决策的问题
 
 请只返回一个单词：chat、knowledge、search 或 react
 
@@ -52,9 +52,12 @@ Agent 类型：
 
 class Orchestrator:
     """
-    Agent 调度器（支持 ReAct）
+    Agent 调度器（优化版）
     
-    根据用户意图路由到合适的 Agent
+    优化策略：
+    1. 命令优先（/搜索、/知识库、/react）
+    2. 快速关键词判断（80% 的情况）
+    3. LLM 判断兜底（20% 的情况）
     """
     
     async def process(
@@ -66,15 +69,6 @@ class Orchestrator:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         处理用户消息
-        
-        Args:
-            message: 用户消息
-            session_id: 会话 ID
-            command: 命令（如 /搜索）
-            stream: 是否流式输出
-        
-        Yields:
-            Dict: 包含类型和内容的消息
         """
         # 根据命令或意图选择 Agent
         agent_type = await self._determine_agent(message, command)
@@ -111,16 +105,14 @@ class Orchestrator:
     
     async def _determine_agent(self, message: str, command: str = None) -> AgentType:
         """
-        确定使用哪个 Agent
+        确定使用哪个 Agent（优化版）
         
-        Args:
-            message: 用户消息
-            command: 命令
-        
-        Returns:
-            AgentType: Agent 类型
+        优先级：
+        1. 明确命令（/搜索、/知识库、/react）
+        2. 快速关键词判断
+        3. LLM 判断（兜底）
         """
-        # 如果有明确命令，直接路由
+        # 1. 如果有明确命令，直接路由
         if command:
             if command.startswith("/搜索") or command.startswith("/search"):
                 return AgentType.SEARCH
@@ -129,12 +121,89 @@ class Orchestrator:
             elif command.startswith("/react") or command.startswith("/推理"):
                 return AgentType.REACT
         
-        # 关键词快速判断
+        # 2. 快速关键词判断（不调用 LLM）
         quick_result = self._quick_classify(message)
         if quick_result:
+            logger.info(f"快速判断: {quick_result}")
             return quick_result
         
-        # 使用 LLM 分析意图
+        # 3. 使用 LLM 分析意图（兜底）
+        logger.info("快速判断无法确定，使用 LLM 分析")
+        return await self._llm_classify(message)
+    
+    def _quick_classify(self, message: str) -> Optional[AgentType]:
+        """
+        快速分类（关键词匹配）
+        
+        返回 None 表示无法快速判断，需要 LLM 介入
+        """
+        
+        # ========== 搜索请求判断 ==========
+        # 用户明确要求搜索，或需要最新信息
+        search_patterns = [
+            "搜索", "搜一下", "查一下", "查找",
+            "最新", "新闻", "今天", "现在", "最近",
+            "2024", "2025", "2026"
+        ]
+        for pattern in search_patterns:
+            if pattern in message:
+                return AgentType.SEARCH
+        
+        # ========== ReAct 复杂推理判断 ==========
+        # 需要多步推理、对比分析
+        react_patterns = [
+            "对比", "比较", "分析", "总结", "推荐",
+            "方案", "选择", "优缺点", "利弊",
+            "哪个更好", "怎么选"
+        ]
+        for pattern in react_patterns:
+            if pattern in message:
+                return AgentType.REACT
+        
+        # ========== 知识库问答判断 ==========
+        # 技术问题、需要文档支持
+        knowledge_patterns = [
+            "怎么", "如何", "为什么", "是什么",
+            "教程", "配置", "安装", "部署", "实现",
+            "报错", "错误", "失败", "问题", "解决",
+            "原理", "机制", "流程", "步骤"
+        ]
+        for pattern in knowledge_patterns:
+            if pattern in message:
+                return AgentType.KNOWLEDGE
+        
+        # ========== 技术栈关键词判断 ==========
+        # 涉及具体技术，可能是知识库问题
+        tech_keywords = [
+            "Redis", "MySQL", "Docker", "Hexo", "Git",
+            "Python", "Java", "JavaScript", "Node.js",
+            "Spring", "Django", "Flask", "FastAPI",
+            "Nginx", "Linux", "Vue", "React", "Angular",
+            "PostgreSQL", "MongoDB", "Elasticsearch",
+            "Kafka", "RabbitMQ", "MQTT"
+        ]
+        for keyword in tech_keywords:
+            if keyword.lower() in message.lower():
+                return AgentType.KNOWLEDGE
+        
+        # ========== 闲聊判断 ==========
+        # 简单问候、感谢等
+        chat_patterns = [
+            "你好", "谢谢", "再见", "早上好", "晚安",
+            "嗯", "好的", "OK", "ok", "是的", "不是",
+            "哈哈", "呵呵", "😊", "👍"
+        ]
+        for pattern in chat_patterns:
+            if pattern in message:
+                return AgentType.CHAT
+        
+        # 无法快速判断，返回 None
+        return None
+    
+    async def _llm_classify(self, message: str) -> AgentType:
+        """
+        使用 LLM 分析意图（兜底方案）
+        """
         try:
             prompt = INTENT_PROMPT.format(message=message)
             messages = [{"role": "user", "content": prompt}]
@@ -152,33 +221,8 @@ class Orchestrator:
                 return AgentType.CHAT
                 
         except Exception as e:
-            logger.error(f"意图分析失败: {e}")
-            # 默认使用对话 Agent
+            logger.error(f"LLM 意图分析失败: {e}")
             return AgentType.CHAT
-    
-    def _quick_classify(self, message: str) -> AgentType:
-        """
-        快速分类（关键词）
-        """
-        # 搜索关键词
-        search_keywords = ["搜索", "查找", "最新", "新闻", "今天", "现在"]
-        for keyword in search_keywords:
-            if keyword in message:
-                return AgentType.SEARCH
-        
-        # 知识库关键词
-        knowledge_keywords = ["怎么", "如何", "是什么", "教程", "配置", "安装", "部署"]
-        for keyword in knowledge_keywords:
-            if keyword in message:
-                return AgentType.KNOWLEDGE
-        
-        # ReAct 关键词（需要多步推理）
-        react_keywords = ["对比", "比较", "分析", "总结", "推荐", "方案"]
-        for keyword in react_keywords:
-            if keyword in message:
-                return AgentType.REACT
-        
-        return None  # 无法快速判断，交给 LLM
 
 
 # 全局调度器实例
