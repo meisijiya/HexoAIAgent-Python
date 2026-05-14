@@ -1,7 +1,7 @@
 """
 对话 API 路由模块
 
-提供对话相关接口
+提供对话相关接口，使用调度器协调多个 Agent
 """
 import json
 from datetime import datetime
@@ -15,10 +15,10 @@ from loguru import logger
 
 from app.core.database import get_db
 from app.core.redis import check_rate_limit
+from app.core.orchestrator import orchestrator
 from app.models.user import User
 from app.models.session import Session
 from app.models.message import Message
-from app.agents.chat_agent import chat_agent
 from app.auth.token import verify_token
 
 router = APIRouter(prefix="/api/chat", tags=["对话"])
@@ -28,19 +28,16 @@ class ChatRequest(BaseModel):
     """对话请求模型"""
     message: str
     session_id: Optional[str] = None
+    command: Optional[str] = None
     token: str
-
-
-class CreateSessionRequest(BaseModel):
-    """创建会话请求模型"""
-    token: str
-    title: Optional[str] = None
 
 
 @router.post("")
 async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     """
     对话接口（流式输出）
+    
+    使用调度器协调多个 Agent，根据用户意图自动路由
     
     Args:
         request: 对话请求
@@ -88,7 +85,7 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         session_id=session_id,
         role="user",
         content=request.message,
-        agent_type="chat"
+        agent_type="user"
     )
     db.add(user_message)
     await db.commit()
@@ -96,23 +93,35 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     # 流式生成回复
     async def generate():
         full_response = ""
+        agent_type = "chat"
         
-        async for chunk in chat_agent.chat(request.message, session_id):
-            full_response += chunk
-            yield f"data: {json.dumps({'content': chunk})}\n\n"
+        async for msg in orchestrator.process(
+            request.message,
+            session_id,
+            request.command
+        ):
+            if msg["type"] == "routing":
+                agent_type = msg["agent"]
+                yield f"data: {json.dumps({'type': 'routing', 'agent': agent_type})}\n\n"
+            elif msg["type"] == "content":
+                full_response += msg["content"]
+                yield f"data: {json.dumps({'content': msg['content']})}\n\n"
+            elif msg["type"] == "done":
+                pass
         
         # 保存助手回复到数据库
         assistant_message = Message(
             session_id=session_id,
             role="assistant",
             content=full_response,
-            agent_type="chat"
+            agent_type=agent_type,
+            metadata_={"agent": agent_type}
         )
         db.add(assistant_message)
         await db.commit()
         
         # 发送完成信号
-        yield f"data: {json.dumps({'done': True, 'session_id': session_id})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'agent': agent_type})}\n\n"
     
     return StreamingResponse(
         generate(),
