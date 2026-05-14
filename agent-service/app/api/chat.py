@@ -1,0 +1,201 @@
+"""
+对话 API 路由模块
+
+提供对话相关接口
+"""
+import json
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from pydantic import BaseModel
+from loguru import logger
+
+from app.core.database import get_db
+from app.core.redis import check_rate_limit
+from app.models.user import User
+from app.models.session import Session
+from app.models.message import Message
+from app.agents.chat_agent import chat_agent
+from app.auth.token import verify_token
+
+router = APIRouter(prefix="/api/chat", tags=["对话"])
+
+
+class ChatRequest(BaseModel):
+    """对话请求模型"""
+    message: str
+    session_id: str = None
+    token: str
+
+
+class CreateSessionRequest(BaseModel):
+    """创建会话请求模型"""
+    token: str
+    title: str = None
+
+
+@router.post("")
+async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
+    """
+    对话接口（流式输出）
+    
+    Args:
+        request: 对话请求
+    
+    Returns:
+        StreamingResponse: 流式响应
+    """
+    # 验证 Token
+    user_id = verify_token(request.token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效的 Token")
+    
+    # 检查限流
+    if not await check_rate_limit(user_id):
+        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
+    
+    # 获取或创建会话
+    session_id = request.session_id
+    
+    if not session_id:
+        # 创建新会话
+        session = Session(
+            user_id=user_id,
+            title=request.message[:50] + "..." if len(request.message) > 50 else request.message
+        )
+        db.add(session)
+        await db.commit()
+        session_id = str(session.id)
+    else:
+        # 验证会话存在且属于当前用户
+        result = await db.execute(
+            select(Session).where(
+                Session.id == session_id,
+                Session.user_id == user_id
+            )
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            raise HTTPException(status_code=404, detail="会话不存在")
+    
+    # 保存用户消息到数据库
+    user_message = Message(
+        session_id=session_id,
+        role="user",
+        content=request.message,
+        agent_type="chat"
+    )
+    db.add(user_message)
+    await db.commit()
+    
+    # 流式生成回复
+    async def generate():
+        full_response = ""
+        
+        async for chunk in chat_agent.chat(request.message, session_id):
+            full_response += chunk
+            yield f"data: {json.dumps({'content': chunk})}\n\n"
+        
+        # 保存助手回复到数据库
+        async with db.begin():
+            assistant_message = Message(
+                session_id=session_id,
+                role="assistant",
+                content=full_response,
+                agent_type="chat"
+            )
+            db.add(assistant_message)
+        
+        # 发送完成信号
+        yield f"data: {json.dumps({'done': True, 'session_id': session_id})}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream"
+    )
+
+
+@router.get("/sessions")
+async def get_sessions(token: str, db: AsyncSession = Depends(get_db)):
+    """
+    获取用户的会话列表
+    
+    Args:
+        token: JWT Token
+    
+    Returns:
+        list: 会话列表
+    """
+    # 验证 Token
+    user_id = verify_token(token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效的 Token")
+    
+    # 查询会话
+    result = await db.execute(
+        select(Session)
+        .where(Session.user_id == user_id)
+        .order_by(Session.updated_at.desc())
+        .limit(20)
+    )
+    sessions = result.scalars().all()
+    
+    return [
+        {
+            "id": str(session.id),
+            "title": session.title,
+            "created_at": session.created_at.isoformat(),
+            "updated_at": session.updated_at.isoformat()
+        }
+        for session in sessions
+    ]
+
+
+@router.get("/sessions/{session_id}/messages")
+async def get_messages(session_id: str, token: str, db: AsyncSession = Depends(get_db)):
+    """
+    获取会话的消息列表
+    
+    Args:
+        session_id: 会话 ID
+        token: JWT Token
+    
+    Returns:
+        list: 消息列表
+    """
+    # 验证 Token
+    user_id = verify_token(token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效的 Token")
+    
+    # 验证会话存在且属于当前用户
+    result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            Session.user_id == user_id
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    
+    # 查询消息
+    result = await db.execute(
+        select(Message)
+        .where(Message.session_id == session_id)
+        .order_by(Message.created_at.asc())
+    )
+    messages = result.scalars().all()
+    
+    return [
+        {
+            "id": str(message.id),
+            "role": message.role,
+            "content": message.content,
+            "agent_type": message.agent_type,
+            "created_at": message.created_at.isoformat()
+        }
+        for message in messages
+    ]
