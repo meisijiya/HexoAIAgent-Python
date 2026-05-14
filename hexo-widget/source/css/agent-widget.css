@@ -80,7 +80,7 @@
     background: var(--agent-user-bg);
     box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
     cursor: pointer;
-    z-index: 9999;
+    z-index: 99999;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -119,7 +119,7 @@
     background: var(--agent-bg);
     border-radius: 16px;
     box-shadow: 0 10px 40px var(--agent-shadow);
-    z-index: 9998;
+    z-index: 99998;
     display: none;
     flex-direction: column;
     overflow: hidden;
@@ -149,6 +149,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-shrink: 0;
 }
 
 .hexo-agent-header-title {
@@ -180,6 +181,7 @@
     border-bottom: 1px solid var(--agent-border);
     font-size: 12px;
     color: var(--agent-text-secondary);
+    flex-shrink: 0;
 }
 
 .hexo-agent-status-dot {
@@ -424,6 +426,7 @@
     border-radius: 12px;
     border: 1px solid var(--agent-border);
     border-bottom-left-radius: 4px;
+    flex-shrink: 0;
 }
 
 .hexo-agent-typing.active {
@@ -459,6 +462,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    flex-shrink: 0;
 }
 
 .hexo-agent-login-btn {
@@ -495,6 +499,7 @@
     display: flex;
     gap: 8px;
     background: var(--agent-bg);
+    flex-shrink: 0;
 }
 
 .hexo-agent-input {
@@ -538,6 +543,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
 }
 
 .hexo-agent-send-btn:hover {
@@ -551,12 +557,13 @@
 }
 
 /* ==================== 响应式适配 ==================== */
-@media (max-width: 480px) {
+@media (max-width: 768px) {
     .hexo-agent-popup {
         width: calc(100vw - 20px);
         height: calc(100vh - 100px);
         bottom: 10px;
         right: 10px;
+        left: 10px;
         border-radius: 12px;
     }
     
