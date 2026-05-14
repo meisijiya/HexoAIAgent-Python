@@ -7,16 +7,17 @@
  * - 消息列表
  * - 流式输出（SSE）
  * - 位置记忆（localStorage）
+ * - Markdown 渲染
+ * - 暗色模式适配
  */
 (function() {
     'use strict';
 
     // ==================== 配置 ====================
     const CONFIG = {
-        API_BASE: 'http://localhost:8001',  // 后端 API 地址
+        API_BASE: 'http://localhost:8001',
         STORAGE_KEY: 'hexo-agent-widget',
-        MAX_MESSAGES: 100,
-        TYPING_DELAY: 500
+        MAX_MESSAGES: 100
     };
 
     // ==================== 状态管理 ====================
@@ -57,6 +58,60 @@
         } catch (e) {}
     }
 
+    // ==================== Markdown 渲染 ====================
+    function renderMarkdown(text) {
+        if (typeof marked === 'undefined') {
+            return escapeHtml(text);
+        }
+        
+        try {
+            marked.setOptions({
+                breaks: true,
+                gfm: true,
+                highlight: function(code, lang) {
+                    if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
+                        try {
+                            return hljs.highlight(code, { language: lang }).value;
+                        } catch (e) {}
+                    }
+                    return code;
+                }
+            });
+            
+            return marked.parse(text);
+        } catch (e) {
+            return escapeHtml(text);
+        }
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // ==================== 暗色模式检测 ====================
+    function isDarkMode() {
+        // 检测 Chic 主题的暗色模式
+        if (document.body.classList.contains('dark-theme')) {
+            return true;
+        }
+        
+        // 检测系统暗色模式
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    function updateTheme() {
+        const widget = $('.hexo-agent-widget');
+        if (widget) {
+            widget.classList.toggle('dark-mode', isDarkMode());
+        }
+    }
+
     // ==================== API 调用 ====================
     async function apiRequest(endpoint, options = {}) {
         const url = `${CONFIG.API_BASE}${endpoint}`;
@@ -92,26 +147,21 @@
 
     // ==================== UI 组件 ====================
     function createWidget() {
-        // 创建主容器
         const container = document.createElement('div');
         container.className = 'hexo-agent-widget';
         container.innerHTML = `
-            <!-- 小人触发器 -->
             <div class="hexo-agent-trigger" id="agentTrigger">
                 <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
                 </svg>
             </div>
             
-            <!-- 对话弹窗 -->
             <div class="hexo-agent-popup" id="agentPopup">
-                <!-- 头部 -->
                 <div class="hexo-agent-header">
                     <span class="hexo-agent-header-title">🤖 AI 助手</span>
                     <button class="hexo-agent-header-close" id="agentClose">&times;</button>
                 </div>
                 
-                <!-- 状态栏 -->
                 <div class="hexo-agent-status">
                     <span>
                         <span class="hexo-agent-status-dot" id="statusDot"></span>
@@ -120,21 +170,18 @@
                     <span id="userInfo"></span>
                 </div>
                 
-                <!-- 消息区域 -->
                 <div class="hexo-agent-messages" id="agentMessages">
                     <div class="hexo-agent-message system">
                         欢迎使用 AI 助手！请先登录。
                     </div>
                 </div>
                 
-                <!-- 打字指示器 -->
                 <div class="hexo-agent-typing" id="agentTyping">
                     <span></span>
                     <span></span>
                     <span></span>
                 </div>
                 
-                <!-- 登录区域 -->
                 <div class="hexo-agent-login" id="agentLogin">
                     <button class="hexo-agent-login-btn github" id="btnGithub">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
@@ -147,7 +194,6 @@
                     </button>
                 </div>
                 
-                <!-- 输入区域 -->
                 <div class="hexo-agent-input-area" id="agentInputArea" style="display:none;">
                     <textarea class="hexo-agent-input" id="agentInput" placeholder="输入消息..." rows="1" disabled></textarea>
                     <button class="hexo-agent-send-btn" id="agentSend" disabled>➤</button>
@@ -168,14 +214,19 @@
         if (extra.className) className += ` ${extra.className}`;
         
         messageEl.className = className;
-        messageEl.innerHTML = content;
+        
+        // 使用 Markdown 渲染助手消息
+        if (role === 'assistant' && !extra.className) {
+            messageEl.innerHTML = renderMarkdown(content);
+        } else {
+            messageEl.innerHTML = content;
+        }
         
         messagesEl.appendChild(messageEl);
         messagesEl.scrollTop = messagesEl.scrollHeight;
         
         state.messages.push({ role, content, ...extra });
         
-        // 限制消息数量
         if (state.messages.length > CONFIG.MAX_MESSAGES) {
             const firstMessage = messagesEl.querySelector('.hexo-agent-message:not(.system)');
             if (firstMessage) firstMessage.remove();
@@ -192,7 +243,7 @@
         articles.forEach(article => {
             const name = article.name || article.relative_path || '未知';
             const score = article.score ? ` (${(article.score * 100).toFixed(0)}%)` : '';
-            html += `<li>${name}${score}</li>`;
+            html += `<li>${escapeHtml(name)}${score}</li>`;
         });
         html += '</ul>';
         addMessage('assistant', html, { className: 'sources' });
@@ -218,24 +269,18 @@
     }
 
     function handleGithubLogin() {
-        // TODO: 实现 GitHub OAuth
         addMessage('system', '⚠️ GitHub 登录暂未实现，请使用匿名体验。');
     }
 
     function updateUI() {
         const isLoggedIn = !!state.token;
         
-        // 更新状态
         $('#statusDot').classList.toggle('connected', isLoggedIn);
         $('#statusText').textContent = isLoggedIn ? '已连接' : '未连接';
         
-        // 显示/隐藏登录区域
         $('#agentLogin').style.display = isLoggedIn ? 'none' : 'flex';
-        
-        // 显示/隐藏输入区域
         $('#agentInputArea').style.display = isLoggedIn ? 'flex' : 'none';
         
-        // 启用/禁用输入
         $('#agentInput').disabled = !isLoggedIn;
         $('#agentSend').disabled = !isLoggedIn;
     }
@@ -247,14 +292,11 @@
         
         if (!message || state.isProcessing) return;
         
-        // 清空输入
         input.value = '';
         input.style.height = 'auto';
         
-        // 显示用户消息
         addMessage('user', escapeHtml(message));
         
-        // 设置处理状态
         state.isProcessing = true;
         $('#agentSend').disabled = true;
         showTyping();
@@ -316,7 +358,8 @@
                                 $('#agentMessages').appendChild(messageEl);
                             }
                             assistantMessage += data.content;
-                            messageEl.textContent = assistantMessage;
+                            // 实时渲染 Markdown
+                            messageEl.innerHTML = renderMarkdown(assistantMessage);
                             $('#agentMessages').scrollTop = $('#agentMessages').scrollHeight;
                         }
                     } catch (e) {}
@@ -351,7 +394,6 @@
             const newLeft = startLeft + deltaX;
             const newBottom = startBottom - deltaY;
             
-            // 限制在视口内
             const maxLeft = window.innerWidth - trigger.offsetWidth;
             const maxBottom = window.innerHeight - trigger.offsetHeight;
             
@@ -366,7 +408,6 @@
             state.isDragging = false;
             trigger.classList.remove('dragging');
             
-            // 保存位置
             state.position = {
                 x: trigger.style.left,
                 y: trigger.style.bottom
@@ -375,7 +416,6 @@
         });
     }
 
-    // ==================== 位置记忆 ====================
     function restorePosition() {
         if (state.position.x && state.position.y) {
             const trigger = $('#agentTrigger');
@@ -387,25 +427,20 @@
 
     // ==================== 事件绑定 ====================
     function bindEvents() {
-        // 小人点击
         $('#agentTrigger').addEventListener('click', (e) => {
             if (state.isDragging) return;
             togglePopup();
         });
         
-        // 关闭按钮
         $('#agentClose').addEventListener('click', () => {
             togglePopup(false);
         });
         
-        // 登录按钮
         $('#btnAnonymous').addEventListener('click', handleAnonymousLogin);
         $('#btnGithub').addEventListener('click', handleGithubLogin);
         
-        // 发送按钮
         $('#agentSend').addEventListener('click', handleSend);
         
-        // 输入框
         $('#agentInput').addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -413,11 +448,19 @@
             }
         });
         
-        // 自动调整输入框高度
         $('#agentInput').addEventListener('input', (e) => {
             e.target.style.height = 'auto';
             e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
         });
+
+        // 监听系统主题变化
+        if (window.matchMedia) {
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateTheme);
+        }
+        
+        // 监听 Chic 主题切换
+        const observer = new MutationObserver(updateTheme);
+        observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
     }
 
     function togglePopup(show) {
@@ -430,37 +473,19 @@
         }
     }
 
-    // ==================== 工具函数 ====================
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
     // ==================== 初始化 ====================
     function init() {
-        // 加载状态
         loadState();
-        
-        // 创建 Widget
         createWidget();
-        
-        // 恢复位置
         restorePosition();
-        
-        // 绑定事件
         bindEvents();
-        
-        // 初始化拖拽
         initDrag();
-        
-        // 更新 UI
         updateUI();
+        updateTheme();
         
         console.log('✅ Hexo Agent Widget 初始化完成');
     }
 
-    // 页面加载后初始化
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {

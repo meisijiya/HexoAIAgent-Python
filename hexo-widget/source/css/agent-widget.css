@@ -8,6 +8,67 @@
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
+/* ==================== CSS 变量（支持暗色模式） ==================== */
+:root {
+    --agent-primary: #667eea;
+    --agent-primary-dark: #764ba2;
+    --agent-bg: #ffffff;
+    --agent-bg-secondary: #f8f9fa;
+    --agent-text: #333333;
+    --agent-text-secondary: #6c757d;
+    --agent-border: #e9ecef;
+    --agent-shadow: rgba(0, 0, 0, 0.15);
+    --agent-user-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --agent-user-text: #ffffff;
+    --agent-assistant-bg: #ffffff;
+    --agent-assistant-text: #333333;
+    --agent-system-bg: #fff3cd;
+    --agent-system-text: #856404;
+    --agent-error-bg: #f8d7da;
+    --agent-error-text: #721c24;
+    --agent-code-bg: #f4f4f4;
+    --agent-code-text: #333333;
+}
+
+/* 暗色模式 */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --agent-bg: #1e1e1e;
+        --agent-bg-secondary: #2d2d2d;
+        --agent-text: #e0e0e0;
+        --agent-text-secondary: #a0a0a0;
+        --agent-border: #404040;
+        --agent-shadow: rgba(0, 0, 0, 0.3);
+        --agent-assistant-bg: #2d2d2d;
+        --agent-assistant-text: #e0e0e0;
+        --agent-system-bg: #3d3d00;
+        --agent-system-text: #ffffcc;
+        --agent-error-bg: #3d0000;
+        --agent-error-text: #ffcccc;
+        --agent-code-bg: #2d2d2d;
+        --agent-code-text: #e0e0e0;
+    }
+}
+
+/* 手动暗色模式类 */
+.dark-theme .hexo-agent-widget,
+.hexo-agent-widget.dark-mode {
+    --agent-bg: #1e1e1e;
+    --agent-bg-secondary: #2d2d2d;
+    --agent-text: #e0e0e0;
+    --agent-text-secondary: #a0a0a0;
+    --agent-border: #404040;
+    --agent-shadow: rgba(0, 0, 0, 0.3);
+    --agent-assistant-bg: #2d2d2d;
+    --agent-assistant-text: #e0e0e0;
+    --agent-system-bg: #3d3d00;
+    --agent-system-text: #ffffcc;
+    --agent-error-bg: #3d0000;
+    --agent-error-text: #ffcccc;
+    --agent-code-bg: #2d2d2d;
+    --agent-code-text: #e0e0e0;
+}
+
 /* ==================== 小人图标 ==================== */
 .hexo-agent-trigger {
     position: fixed;
@@ -16,7 +77,7 @@
     width: 60px;
     height: 60px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--agent-user-bg);
     box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
     cursor: pointer;
     z-index: 9999;
@@ -42,7 +103,6 @@
     fill: white;
 }
 
-/* 拖拽时的样式 */
 .hexo-agent-trigger.dragging {
     opacity: 0.8;
     cursor: grabbing;
@@ -54,11 +114,11 @@
     position: fixed;
     bottom: 100px;
     right: 30px;
-    width: 380px;
-    height: 500px;
-    background: white;
+    width: 400px;
+    height: 550px;
+    background: var(--agent-bg);
     border-radius: 16px;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 10px 40px var(--agent-shadow);
     z-index: 9998;
     display: none;
     flex-direction: column;
@@ -83,7 +143,7 @@
 
 /* ==================== 弹窗头部 ==================== */
 .hexo-agent-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--agent-user-bg);
     color: white;
     padding: 16px 20px;
     display: flex;
@@ -112,14 +172,14 @@
 
 /* ==================== 状态栏 ==================== */
 .hexo-agent-status {
-    background: #f8f9fa;
+    background: var(--agent-bg-secondary);
     padding: 8px 16px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    border-bottom: 1px solid #e9ecef;
+    border-bottom: 1px solid var(--agent-border);
     font-size: 12px;
-    color: #6c757d;
+    color: var(--agent-text-secondary);
 }
 
 .hexo-agent-status-dot {
@@ -143,7 +203,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    background: #fafafa;
+    background: var(--agent-bg-secondary);
 }
 
 .hexo-agent-messages::-webkit-scrollbar {
@@ -151,7 +211,7 @@
 }
 
 .hexo-agent-messages::-webkit-scrollbar-thumb {
-    background: #ccc;
+    background: var(--agent-border);
     border-radius: 3px;
 }
 
@@ -160,7 +220,7 @@
     max-width: 85%;
     padding: 10px 14px;
     border-radius: 12px;
-    line-height: 1.5;
+    line-height: 1.6;
     font-size: 14px;
     word-wrap: break-word;
     animation: fadeIn 0.3s ease-out;
@@ -173,40 +233,38 @@
 
 .hexo-agent-message.user {
     align-self: flex-end;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+    background: var(--agent-user-bg);
+    color: var(--agent-user-text);
     border-bottom-right-radius: 4px;
 }
 
 .hexo-agent-message.assistant {
     align-self: flex-start;
-    background: white;
-    color: #333;
-    border: 1px solid #e9ecef;
+    background: var(--agent-assistant-bg);
+    color: var(--agent-assistant-text);
+    border: 1px solid var(--agent-border);
     border-bottom-left-radius: 4px;
 }
 
 .hexo-agent-message.system {
     align-self: center;
-    background: #fff3cd;
-    color: #856404;
+    background: var(--agent-system-bg);
+    color: var(--agent-system-text);
     font-size: 12px;
     max-width: 90%;
     text-align: center;
-    border: 1px solid #ffeaa7;
+    border: 1px solid var(--agent-border);
 }
 
 .hexo-agent-message.error {
     align-self: center;
-    background: #f8d7da;
-    color: #721c24;
+    background: var(--agent-error-bg);
+    color: var(--agent-error-text);
     font-size: 12px;
     max-width: 90%;
     text-align: center;
-    border: 1px solid #f5c6cb;
 }
 
-/* Agent 信息卡片 */
 .hexo-agent-message.agent-info {
     align-self: flex-start;
     background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
@@ -216,7 +274,6 @@
     border-left: 3px solid #1976d2;
 }
 
-/* 知识库来源卡片 */
 .hexo-agent-message.sources {
     align-self: flex-start;
     background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
@@ -224,6 +281,21 @@
     font-size: 12px;
     max-width: 90%;
     border-left: 3px solid #4caf50;
+}
+
+/* 暗色模式下的 agent-info 和 sources */
+.dark-theme .hexo-agent-message.agent-info,
+.hexo-agent-widget.dark-mode .hexo-agent-message.agent-info {
+    background: linear-gradient(135deg, #1a237e 0%, #283593 100%);
+    color: #90caf9;
+    border-left-color: #42a5f5;
+}
+
+.dark-theme .hexo-agent-message.sources,
+.hexo-agent-widget.dark-mode .hexo-agent-message.sources {
+    background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%);
+    color: #a5d6a7;
+    border-left-color: #66bb6a;
 }
 
 .hexo-agent-sources-list {
@@ -235,14 +307,122 @@
     margin-bottom: 4px;
 }
 
+/* ==================== Markdown 渲染样式 ==================== */
+.hexo-agent-message.assistant h1,
+.hexo-agent-message.assistant h2,
+.hexo-agent-message.assistant h3,
+.hexo-agent-message.assistant h4,
+.hexo-agent-message.assistant h5,
+.hexo-agent-message.assistant h6 {
+    margin-top: 12px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.hexo-agent-message.assistant h1 { font-size: 1.5em; }
+.hexo-agent-message.assistant h2 { font-size: 1.3em; }
+.hexo-agent-message.assistant h3 { font-size: 1.1em; }
+
+.hexo-agent-message.assistant p {
+    margin-bottom: 8px;
+}
+
+.hexo-agent-message.assistant p:last-child {
+    margin-bottom: 0;
+}
+
+.hexo-agent-message.assistant ul,
+.hexo-agent-message.assistant ol {
+    margin: 8px 0;
+    padding-left: 20px;
+}
+
+.hexo-agent-message.assistant li {
+    margin-bottom: 4px;
+}
+
+.hexo-agent-message.assistant code {
+    background: var(--agent-code-bg);
+    color: var(--agent-code-text);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+}
+
+.hexo-agent-message.assistant pre {
+    background: var(--agent-code-bg);
+    border-radius: 8px;
+    padding: 12px;
+    margin: 8px 0;
+    overflow-x: auto;
+}
+
+.hexo-agent-message.assistant pre code {
+    background: none;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.hexo-agent-message.assistant blockquote {
+    border-left: 3px solid var(--agent-primary);
+    padding-left: 12px;
+    margin: 8px 0;
+    color: var(--agent-text-secondary);
+}
+
+.hexo-agent-message.assistant table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 8px 0;
+    font-size: 13px;
+}
+
+.hexo-agent-message.assistant th,
+.hexo-agent-message.assistant td {
+    border: 1px solid var(--agent-border);
+    padding: 6px 10px;
+    text-align: left;
+}
+
+.hexo-agent-message.assistant th {
+    background: var(--agent-bg-secondary);
+    font-weight: 600;
+}
+
+.hexo-agent-message.assistant a {
+    color: var(--agent-primary);
+    text-decoration: none;
+}
+
+.hexo-agent-message.assistant a:hover {
+    text-decoration: underline;
+}
+
+.hexo-agent-message.assistant strong {
+    font-weight: 600;
+}
+
+.hexo-agent-message.assistant em {
+    font-style: italic;
+}
+
+.hexo-agent-message.assistant hr {
+    border: none;
+    border-top: 1px solid var(--agent-border);
+    margin: 12px 0;
+}
+
 /* ==================== 打字指示器 ==================== */
 .hexo-agent-typing {
     display: none;
     align-self: flex-start;
     padding: 10px 14px;
-    background: white;
+    background: var(--agent-assistant-bg);
     border-radius: 12px;
-    border: 1px solid #e9ecef;
+    border: 1px solid var(--agent-border);
     border-bottom-left-radius: 4px;
 }
 
@@ -254,7 +434,7 @@
 .hexo-agent-typing span {
     width: 8px;
     height: 8px;
-    background: #999;
+    background: var(--agent-text-secondary);
     border-radius: 50%;
     animation: typing 1.4s infinite;
 }
@@ -311,16 +491,16 @@
 /* ==================== 输入区域 ==================== */
 .hexo-agent-input-area {
     padding: 12px 16px;
-    border-top: 1px solid #e9ecef;
+    border-top: 1px solid var(--agent-border);
     display: flex;
     gap: 8px;
-    background: white;
+    background: var(--agent-bg);
 }
 
 .hexo-agent-input {
     flex: 1;
     padding: 10px 14px;
-    border: 1px solid #e9ecef;
+    border: 1px solid var(--agent-border);
     border-radius: 20px;
     font-size: 14px;
     outline: none;
@@ -328,14 +508,20 @@
     resize: none;
     max-height: 100px;
     min-height: 40px;
+    background: var(--agent-bg);
+    color: var(--agent-text);
 }
 
 .hexo-agent-input:focus {
-    border-color: #667eea;
+    border-color: var(--agent-primary);
+}
+
+.hexo-agent-input::placeholder {
+    color: var(--agent-text-secondary);
 }
 
 .hexo-agent-input:disabled {
-    background: #f8f9fa;
+    background: var(--agent-bg-secondary);
     cursor: not-allowed;
 }
 
@@ -344,7 +530,7 @@
     height: 40px;
     border: none;
     border-radius: 50%;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--agent-user-bg);
     color: white;
     font-size: 18px;
     cursor: pointer;
