@@ -116,8 +116,8 @@ async def add_message_to_context(session_id: str, role: str, content: str, ttl: 
         "content": content
     })
     
-    # 添加到列表头部
-    await redis_client.lpush(key, message)
+    # 添加到列表尾部（保持时间顺序）
+    await redis_client.rpush(key, message)
     
     # 保留最近 20 条消息
     await redis_client.ltrim(key, 0, 19)
