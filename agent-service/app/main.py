@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.config import settings
+from app.core.database import init_db, close_db
 
 
 @asynccontextmanager
@@ -28,14 +29,16 @@ async def lifespan(app: FastAPI):
     logger.info(f"📦 版本: {settings.APP_VERSION}")
     logger.info(f"🔧 调试模式: {settings.DEBUG}")
     
-    # TODO: 初始化数据库连接
+    # 初始化数据库（创建表）
+    await init_db()
+    
     # TODO: 初始化 Redis 连接
     
     yield
     
     # ========== 关闭 ==========
     logger.info("👋 关闭 Hexo Agent Service...")
-    # TODO: 关闭数据库连接
+    await close_db()
     # TODO: 关闭 Redis 连接
 
 
