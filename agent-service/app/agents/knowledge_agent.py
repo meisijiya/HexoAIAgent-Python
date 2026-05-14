@@ -1,66 +1,61 @@
 """
-知识库 Agent 模块（优化版）
+知识库 Agent 模块（优化版 v2）
 
 负责：
 - 从知识库检索相关信息
 - 结合检索结果生成回答
 - 返回找到的文章信息
 - 集成容错处理
+- 使用结构化 Prompt 构建
+- 集成对话历史管理
 """
 from typing import AsyncGenerator, List, Dict, Any
 from loguru import logger
 
 from app.core.llm import llm_client
+from app.core.prompt_builder import knowledge_prompt_builder
+from app.core.history_manager import history_manager
 from app.knowledge.retriever import retriever, SearchResult
 from app.core.database import async_session_maker
 from app.agents.error_handler import error_handler
 
 
-# 系统提示词
-KNOWLEDGE_PROMPT = """你是一个专业的知识库助手，专门根据提供的参考资料回答问题。
-
-你的任务：
-1. 仔细阅读参考资料
-2. 基于参考资料回答用户问题
-3. 如果参考资料中没有相关信息，诚实地说不知道
-4. 回答要准确、简洁
-5. 引用参考资料时注明来源
-
-请用中文回复。"""
-
-
 class KnowledgeAgent:
     """
-    知识库 Agent（优化版）
+    知识库 Agent（优化版 v2）
     
-    从知识库检索相关信息并生成回答，支持：
-    - 动态相似度阈值
-    - 动态 Top K
-    - 容错处理
+    改进点：
+    1. 使用结构化 Prompt 构建
+    2. 集成对话历史管理
+    3. 支持动态阈值和 Top K
+    4. 集成容错处理
     """
     
     async def search_and_answer(
         self,
         query: str,
+        session_id: str = None,
         stream: bool = True
     ) -> AsyncGenerator[str, None]:
         """
-        搜索知识库并生成回答（简单版本，只返回内容）
+        搜索知识库并生成回答（简单版本）
         
         Args:
             query: 用户查询
+            session_id: 会话 ID（用于获取历史）
             stream: 是否流式输出
         
         Yields:
             str: 回复内容片段
         """
-        async for msg in self.search_and_answer_with_info(query, stream):
+        async for msg in self.search_and_answer_with_info(query, session_id, stream):
             if msg["type"] == "content":
                 yield msg["content"]
     
     async def search_and_answer_with_info(
         self,
         query: str,
+        session_id: str = None,
         stream: bool = True
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
@@ -68,6 +63,7 @@ class KnowledgeAgent:
         
         Args:
             query: 用户查询
+            session_id: 会话 ID（用于获取历史）
             stream: 是否流式输出
         
         Yields:
@@ -75,11 +71,16 @@ class KnowledgeAgent:
         """
         logger.info(f"知识库查询: {query[:50]}...")
         
-        # 检索相关文档（使用动态参数）
+        # 1. 获取对话历史
+        history = None
+        if session_id:
+            history = await history_manager.get_history(session_id)
+        
+        # 2. 检索相关文档（使用动态参数）
         async with async_session_maker() as db:
             search_results = await retriever.search(db, query, dynamic=True)
         
-        # 如果没有找到结果，触发容错处理
+        # 3. 如果没有找到结果，触发容错处理
         if not search_results:
             logger.info(f"知识库无匹配，触发容错处理")
             
@@ -94,7 +95,7 @@ class KnowledgeAgent:
             
             return
         
-        # 发送找到的文章信息
+        # 4. 发送找到的文章信息
         articles_info = []
         seen_sources = set()
         for i, result in enumerate(search_results, 1):
@@ -122,16 +123,20 @@ class KnowledgeAgent:
             "articles": articles_info
         }
         
-        # 构建上下文
-        context = self._build_context(search_results)
+        # 5. 构建上下文
+        rag_context = self._build_context(search_results)
         
-        # 构建消息
-        messages = [
-            {"role": "system", "content": KNOWLEDGE_PROMPT},
-            {"role": "user", "content": f"参考资料：\n{context}\n\n用户问题：{query}"}
-        ]
+        # 6. 使用 Prompt 构建器生成 Prompt
+        prompt = knowledge_prompt_builder.build_for_knowledge(
+            user_input=query,
+            rag_context=rag_context,
+            history=history
+        )
         
-        # 调用 LLM 生成回答
+        # 7. 构建消息列表
+        messages = [{"role": "user", "content": prompt}]
+        
+        # 8. 调用 LLM 生成回答
         full_response = ""
         
         if stream:
@@ -142,6 +147,11 @@ class KnowledgeAgent:
             response = await llm_client.chat(messages)
             full_response = response
             yield {"type": "content", "content": response}
+        
+        # 9. 保存到历史
+        if session_id:
+            await history_manager.save_message(session_id, "user", query)
+            await history_manager.save_message(session_id, "assistant", full_response)
         
         logger.info(f"知识库回答完成: {full_response[:50]}...")
     
