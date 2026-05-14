@@ -93,7 +93,6 @@
         let left = parseInt(trigger.style.left) || rect.left;
         let bottom = parseInt(trigger.style.bottom) || (viewHeight - rect.bottom);
 
-        // 确保小人在视口内
         if (left + 60 > viewWidth) left = viewWidth - 70;
         if (left < 10) left = 10;
         if (bottom + 60 > viewHeight) bottom = viewHeight - 70;
@@ -188,12 +187,21 @@
         addMessage('assistant', `<strong>${agentName}</strong><br>${message}`, { className: 'agent-info' });
     }
 
+    // 更新 addSources 函数，支持可点击链接
     function addSources(articles) {
         let html = '<strong>📚 参考来源：</strong><ul class="hexo-agent-sources-list">';
         articles.forEach(a => {
             const name = a.name || a.relative_path || '未知';
             const score = a.score ? ` (${(a.score * 100).toFixed(0)}%)` : '';
-            html += `<li>${escapeHtml(name)}${score}</li>`;
+            const blogUrl = a.blog_url || '';
+            
+            if (blogUrl && blogUrl !== 'https://meisijiya.github.io') {
+                // 有有效链接，显示为可点击
+                html += `<li><a href="${escapeHtml(blogUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(name)}</a>${score}</li>`;
+            } else {
+                // 没有有效链接，显示为纯文本
+                html += `<li>${escapeHtml(name)}${score}</li>`;
+            }
         });
         html += '</ul>';
         addMessage('assistant', html, { className: 'sources' });
@@ -345,7 +353,6 @@
             trigger.style.left = state.position.x;
             trigger.style.bottom = state.position.y;
             trigger.style.right = 'auto';
-            // 恢复后检查边界
             setTimeout(checkBounds, 100);
         }
     }
@@ -368,10 +375,8 @@
             e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
         });
 
-        // 监听窗口大小变化
         window.addEventListener('resize', checkBounds);
 
-        // 监听主题变化
         if (window.matchMedia) {
             window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateTheme);
         }
@@ -385,7 +390,6 @@
         popup.classList.toggle('active', state.isOpen);
         if (state.isOpen) {
             $('#agentInput').focus();
-            // 打开弹窗时也检查边界
             checkBounds();
         }
     }
@@ -399,7 +403,6 @@
         initDrag();
         updateUI();
         updateTheme();
-        // 初始化后检查边界
         setTimeout(checkBounds, 500);
         console.log('✅ Hexo Agent Widget 初始化完成');
     }
