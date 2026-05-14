@@ -16,6 +16,9 @@ from app.config import settings
 from app.core.database import init_db, close_db
 from app.core.redis import init_redis, close_redis
 
+# 导入路由
+from app.api.auth import router as auth_router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -60,6 +63,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册路由
+app.include_router(auth_router)
 
 
 @app.get("/")
