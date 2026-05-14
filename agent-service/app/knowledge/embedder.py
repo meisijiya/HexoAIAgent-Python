@@ -4,12 +4,17 @@ Embedding 服务模块
 负责：
 - 调用 DashScope API 生成文本向量
 - 支持单条和批量向量化
+- 自动分批处理（DashScope 限制每批最多 10 条）
 """
 from typing import List
 import httpx
 from loguru import logger
 
 from app.config import settings
+
+
+# DashScope API 单次最大处理数量
+MAX_BATCH_SIZE = 10
 
 
 class EmbeddingService:
@@ -40,10 +45,33 @@ class EmbeddingService:
     
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """
-        批量将文本转换为向量
+        批量将文本转换为向量（自动分批处理）
         
         Args:
             texts: 文本列表
+        
+        Returns:
+            List[List[float]]: 向量列表
+        """
+        if not texts:
+            return []
+        
+        all_embeddings = []
+        
+        # 分批处理，每批最多 MAX_BATCH_SIZE 条
+        for i in range(0, len(texts), MAX_BATCH_SIZE):
+            batch = texts[i:i + MAX_BATCH_SIZE]
+            batch_embeddings = await self._embed_batch_internal(batch)
+            all_embeddings.extend(batch_embeddings)
+        
+        return all_embeddings
+    
+    async def _embed_batch_internal(self, texts: List[str]) -> List[List[float]]:
+        """
+        内部方法：处理单批次的 Embedding 请求
+        
+        Args:
+            texts: 文本列表（最多 10 条）
         
         Returns:
             List[List[float]]: 向量列表
@@ -70,10 +98,18 @@ class EmbeddingService:
                 
                 data = response.json()
                 
+                # 检查是否有错误
+                if "error" in data:
+                    logger.error(f"Embedding API 错误: {data['error']}")
+                    raise Exception(f"Embedding API 错误: {data['error']['message']}")
+                
                 # 提取向量并按索引排序
                 embeddings = sorted(data["data"], key=lambda x: x["index"])
                 return [item["embedding"] for item in embeddings]
                 
+            except httpx.TimeoutException:
+                logger.error("Embedding API 调用超时")
+                raise Exception("Embedding API 调用超时")
             except Exception as e:
                 logger.error(f"Embedding 调用失败: {e}")
                 raise
