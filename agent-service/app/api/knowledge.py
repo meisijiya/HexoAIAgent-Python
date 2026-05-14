@@ -1,7 +1,12 @@
 """
-知识库 API 路由模块
+知识库 API 路由模块（优化版）
 
-提供知识库管理相关接口
+提供知识库管理相关接口，支持：
+- 文章创建（带 front-matter 解析）
+- 文章删除
+- 文章列表
+- 知识库搜索
+- 知识库问答
 """
 import uuid
 from datetime import datetime
@@ -19,6 +24,7 @@ from app.models.knowledge import Article, Chunk, SyncLog
 from app.knowledge.chunker import chunk_markdown
 from app.knowledge.embedder import embedding_service
 from app.knowledge.retriever import retriever
+from app.knowledge.frontmatter_parser import parse_frontmatter, normalize_categories, normalize_tags
 from app.agents.knowledge_agent import knowledge_agent
 
 router = APIRouter(prefix="/api/knowledge", tags=["知识库"])
@@ -41,7 +47,7 @@ class SearchRequest(BaseModel):
 @router.post("/articles")
 async def create_article(article: ArticleCreate, db: AsyncSession = Depends(get_db)):
     """
-    创建文章并生成向量
+    创建文章并生成向量（支持 front-matter 解析）
     
     Args:
         article: 文章数据
@@ -57,6 +63,13 @@ async def create_article(article: ArticleCreate, db: AsyncSession = Depends(get_
             )
             if existing.scalar_one_or_none():
                 raise HTTPException(status_code=400, detail="文章 URL 已存在")
+        
+        # 解析 front-matter
+        frontmatter = parse_frontmatter(article.content)
+        
+        # 提取分类和标签
+        categories = normalize_categories(frontmatter.get("categories"))
+        tags = normalize_tags(frontmatter.get("tags"))
         
         # 创建文章
         db_article = Article(
@@ -76,25 +89,33 @@ async def create_article(article: ArticleCreate, db: AsyncSession = Depends(get_
         texts = [c["content"] for c in chunks]
         embeddings = await embedding_service.embed_batch(texts)
         
-        # 保存分块和向量
+        # 保存分块和向量（带元数据）
         for chunk_data, embedding in zip(chunks, embeddings):
+            # 更新 metadata，添加分类和标签
+            metadata = chunk_data["metadata"]
+            metadata["categories"] = categories
+            metadata["tags"] = tags
+            metadata["title"] = article.title
+            
             db_chunk = Chunk(
                 article_id=db_article.id,
                 chunk_index=chunk_data["metadata"]["chunk_index"],
                 content=chunk_data["content"],
                 embedding=embedding,
-                metadata_=chunk_data["metadata"]
+                metadata_=metadata
             )
             db.add(db_chunk)
         
         await db.commit()
         
-        logger.info(f"文章创建成功: {article.title}, {len(chunks)} 个分块")
+        logger.info(f"文章创建成功: {article.title}, 分类: {categories}, 分块: {len(chunks)}")
         
         return {
             "id": str(db_article.id),
             "title": article.title,
-            "chunks_count": len(chunks)
+            "chunks_count": len(chunks),
+            "categories": categories,
+            "tags": tags
         }
         
     except HTTPException:
@@ -109,12 +130,6 @@ async def create_article(article: ArticleCreate, db: AsyncSession = Depends(get_
 async def delete_article(article_id: str, db: AsyncSession = Depends(get_db)):
     """
     删除文章及其分块
-    
-    Args:
-        article_id: 文章 ID
-    
-    Returns:
-        dict: 删除结果
     """
     result = await db.execute(
         select(Article).where(Article.id == article_id)
@@ -134,9 +149,6 @@ async def delete_article(article_id: str, db: AsyncSession = Depends(get_db)):
 async def list_articles(skip: int = 0, limit: int = 20, db: AsyncSession = Depends(get_db)):
     """
     获取文章列表
-    
-    Returns:
-        list: 文章列表
     """
     result = await db.execute(
         select(Article)
@@ -162,12 +174,6 @@ async def list_articles(skip: int = 0, limit: int = 20, db: AsyncSession = Depen
 async def search_knowledge(request: SearchRequest, db: AsyncSession = Depends(get_db)):
     """
     搜索知识库
-    
-    Args:
-        request: 搜索请求
-    
-    Returns:
-        list: 搜索结果
     """
     results = await retriever.search(db, request.query, request.top_k)
     
@@ -178,12 +184,6 @@ async def search_knowledge(request: SearchRequest, db: AsyncSession = Depends(ge
 async def knowledge_chat(request: SearchRequest):
     """
     知识库问答（流式输出）
-    
-    Args:
-        request: 搜索请求
-    
-    Returns:
-        StreamingResponse: 流式响应
     """
     async def generate():
         async for chunk in knowledge_agent.search_and_answer(request.query):
