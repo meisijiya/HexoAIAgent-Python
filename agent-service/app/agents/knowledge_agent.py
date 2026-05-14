@@ -1,5 +1,5 @@
 """
-知识库 Agent 模块（优化版 v2）
+知识库 Agent 模块（优化版 v3）
 
 负责：
 - 从知识库检索相关信息
@@ -8,6 +8,7 @@
 - 集成容错处理
 - 使用结构化 Prompt 构建
 - 集成对话历史管理
+- 优化路径显示
 """
 from typing import AsyncGenerator, List, Dict, Any
 from loguru import logger
@@ -22,13 +23,14 @@ from app.agents.error_handler import error_handler
 
 class KnowledgeAgent:
     """
-    知识库 Agent（优化版 v2）
+    知识库 Agent（优化版 v3）
     
     改进点：
     1. 使用结构化 Prompt 构建
     2. 集成对话历史管理
     3. 支持动态阈值和 Top K
     4. 集成容错处理
+    5. 优化路径显示（只显示相对路径）
     """
     
     async def search_and_answer(
@@ -105,10 +107,10 @@ class KnowledgeAgent:
             # 去重显示来源
             if source not in seen_sources:
                 seen_sources.add(source)
-                # 从 URL 提取文章名
-                article_name = source.split("/")[-1] if "/" in source else source
-                if article_name.endswith(".md"):
-                    article_name = article_name[:-3]  # 去掉 .md 后缀
+                
+                # 提取相对路径（从 _posts 开始）
+                article_name = self._extract_relative_path(source)
+                
                 articles_info.append({
                     "index": i,
                     "source": source,
@@ -155,6 +157,42 @@ class KnowledgeAgent:
         
         logger.info(f"知识库回答完成: {full_response[:50]}...")
     
+    def _extract_relative_path(self, source: str) -> str:
+        """
+        提取相对路径（从 _posts 开始）
+        
+        Args:
+            source: 原始路径（如 file:///mnt/c/Users/.../blog/source/_posts/2025/xxx.md）
+        
+        Returns:
+            str: 相对路径（如 2025/xxx）
+        
+        示例：
+            输入: file:///mnt/c/Users/22923/Desktop/blog/source/_posts/2025/博客建设/记录搭建博客流程😗.md
+            输出: 2025/博客建设/记录搭建博客流程😗
+        """
+        
+        # 查找 _posts 的位置
+        posts_marker = "_posts/"
+        posts_index = source.find(posts_marker)
+        
+        if posts_index != -1:
+            # 从 _posts 之后开始截取
+            relative_path = source[posts_index + len(posts_marker):]
+        else:
+            # 如果没有 _posts，使用文件名
+            relative_path = source.split("/")[-1] if "/" in source else source
+        
+        # 去掉 .md 后缀
+        if relative_path.endswith(".md"):
+            relative_path = relative_path[:-3]
+        
+        # URL 解码（处理中文和特殊字符）
+        import urllib.parse
+        relative_path = urllib.parse.unquote(relative_path)
+        
+        return relative_path
+    
     def _build_context(self, results: List[SearchResult]) -> str:
         """
         构建检索上下文
@@ -169,7 +207,9 @@ class KnowledgeAgent:
         
         for i, result in enumerate(results, 1):
             source = result.metadata.get("_source", "未知来源")
-            context_parts.append(f"[参考资料 {i}] (来源: {source})\n{result.content}")
+            # 使用相对路径
+            relative_path = self._extract_relative_path(source)
+            context_parts.append(f"[参考资料 {i}] (来源: {relative_path})\n{result.content}")
         
         return "\n\n".join(context_parts)
 
