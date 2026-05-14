@@ -10,7 +10,10 @@ FastAPI 应用入口模块
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from loguru import logger
+import os
 
 from app.config import settings
 from app.core.database import init_db, close_db
@@ -19,6 +22,7 @@ from app.core.redis import init_redis, close_redis
 # 导入路由
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
+from app.api.knowledge import router as knowledge_router
 
 
 @asynccontextmanager
@@ -68,16 +72,22 @@ app.add_middleware(
 # 注册路由
 app.include_router(auth_router)
 app.include_router(chat_router)
+app.include_router(knowledge_router)
+
+# 挂载静态文件
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 @app.get("/")
 async def root():
     """
-    根路径 - 健康检查
-    
-    Returns:
-        dict: 服务状态信息
+    根路径 - 返回测试页面
     """
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
     return {
         "service": settings.APP_NAME,
         "version": settings.APP_VERSION,
