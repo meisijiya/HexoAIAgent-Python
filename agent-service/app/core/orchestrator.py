@@ -6,7 +6,7 @@ Agent 调度器模块
 - 路由到合适的 Agent
 - 协调多个 Agent 协作
 """
-from typing import AsyncGenerator, Dict, Any
+from typing import AsyncGenerator, Dict, Any, List
 from enum import Enum
 from loguru import logger
 
@@ -22,6 +22,13 @@ class AgentType(str, Enum):
     KNOWLEDGE = "knowledge"
     SEARCH = "search"
 
+
+# Agent 中文名称映射
+AGENT_NAMES = {
+    AgentType.CHAT: "对话 Agent",
+    AgentType.KNOWLEDGE: "知识库 Agent",
+    AgentType.SEARCH: "搜索 Agent",
+}
 
 # 意图分析提示词
 INTENT_PROMPT = """你是一个意图分析助手。根据用户的消息，判断应该使用哪个 Agent 来回答。
@@ -66,16 +73,22 @@ class Orchestrator:
         """
         # 根据命令或意图选择 Agent
         agent_type = await self._determine_agent(message, command)
+        agent_name = AGENT_NAMES.get(agent_type, "未知 Agent")
         
-        logger.info(f"路由到 Agent: {agent_type}")
+        logger.info(f"路由到 Agent: {agent_name}")
         
         # 发送路由信息
-        yield {"type": "routing", "agent": agent_type}
+        yield {
+            "type": "routing",
+            "agent": agent_type,
+            "agent_name": agent_name,
+            "message": f"🤖 正在调用 {agent_name}..."
+        }
         
         # 调用对应的 Agent
         if agent_type == AgentType.KNOWLEDGE:
-            async for chunk in knowledge_agent.search_and_answer(message, stream):
-                yield {"type": "content", "content": chunk}
+            async for msg in knowledge_agent.search_and_answer_with_info(message, stream):
+                yield msg
         elif agent_type == AgentType.SEARCH:
             async for chunk in search_agent.search_and_answer(message, stream):
                 yield {"type": "content", "content": chunk}
@@ -83,7 +96,7 @@ class Orchestrator:
             async for chunk in chat_agent.chat(message, session_id, stream):
                 yield {"type": "content", "content": chunk}
         
-        yield {"type": "done", "agent": agent_type}
+        yield {"type": "done", "agent": agent_type, "agent_name": agent_name}
     
     async def _determine_agent(self, message: str, command: str = None) -> AgentType:
         """

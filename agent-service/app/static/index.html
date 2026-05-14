@@ -117,6 +117,33 @@
             text-align: center;
         }
         
+        .message.agent-info {
+            align-self: flex-start;
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            color: #1565c0;
+            font-size: 13px;
+            max-width: 90%;
+            border-left: 4px solid #1976d2;
+        }
+        
+        .message.sources {
+            align-self: flex-start;
+            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+            color: #2e7d32;
+            font-size: 13px;
+            max-width: 90%;
+            border-left: 4px solid #4caf50;
+        }
+        
+        .sources-list {
+            margin-top: 8px;
+            padding-left: 20px;
+        }
+        
+        .sources-list li {
+            margin-bottom: 4px;
+        }
+        
         .input-area {
             padding: 20px;
             border-top: 1px solid #e9ecef;
@@ -226,7 +253,7 @@
     <div class="container">
         <div class="header">
             <h1>🤖 Hexo Agent 测试</h1>
-            <p>对话 Agent 功能测试页面</p>
+            <p>对话 Agent + 知识库 Agent + 搜索 Agent</p>
         </div>
         
         <div class="status-bar">
@@ -252,7 +279,7 @@
         </div>
         
         <div class="input-area" id="inputArea" style="display: none;">
-            <input type="text" id="messageInput" placeholder="输入消息..." disabled>
+            <input type="text" id="messageInput" placeholder="输入消息...（试试问：如何安装 Hexo）" disabled>
             <button id="sendButton" disabled>发送</button>
         </div>
         
@@ -349,7 +376,7 @@
             messageInput.disabled = false;
             sendButton.disabled = false;
             
-            addMessage('system', `欢迎, ${user.nickname}！现在可以开始对话了。`);
+            addMessage('system', `欢迎, ${user.nickname}！现在可以开始对话了。试试问：如何安装 Hexo？`);
         }
         
         // 添加消息到界面
@@ -357,6 +384,31 @@
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
             messageDiv.textContent = content;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        // 添加 Agent 信息
+        function addAgentInfo(agentName, message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message agent-info';
+            messageDiv.innerHTML = `<strong>${agentName}</strong><br>${message}`;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        // 添加知识库来源
+        function addKnowledgeSources(articles) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message sources';
+            
+            let html = '<strong>📚 参考来源：</strong><ul class="sources-list">';
+            articles.forEach(article => {
+                html += `<li>${article.name} (相似度: ${(article.score * 100).toFixed(1)}%)</li>`;
+            });
+            html += '</ul>';
+            
+            messageDiv.innerHTML = html;
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
@@ -408,7 +460,31 @@
                     const lines = text.split('\n');
                     
                     for (const line of lines) {
-                        if (line.startsWith('data: ')) {
+                        if (line.startsWith('event: ')) {
+                            // 处理事件类型
+                            const eventType = line.slice(7).trim();
+                            
+                            // 读取下一行的 data
+                            const nextLine = lines[lines.indexOf(line) + 1];
+                            if (nextLine && nextLine.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(nextLine.slice(6));
+                                    
+                                    if (eventType === 'routing') {
+                                        // 显示 Agent 信息
+                                        typingIndicator.style.display = 'none';
+                                        addAgentInfo(data.agent_name, data.message);
+                                    } else if (eventType === 'sources') {
+                                        // 显示知识库来源
+                                        addKnowledgeSources(data.articles);
+                                    } else if (eventType === 'done') {
+                                        sessionId = data.session_id;
+                                    }
+                                } catch (e) {
+                                    // 忽略解析错误
+                                }
+                            }
+                        } else if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.slice(6));
                                 

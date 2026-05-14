@@ -100,12 +100,23 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             session_id,
             request.command
         ):
+            # 根据消息类型发送不同的 SSE 事件
             if msg["type"] == "routing":
                 agent_type = msg["agent"]
-                yield f"data: {json.dumps({'type': 'routing', 'agent': agent_type})}\n\n"
+                yield f"event: routing\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            
+            elif msg["type"] == "knowledge_sources":
+                # 知识库找到的文章信息
+                yield f"event: sources\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            
+            elif msg["type"] == "info":
+                # 信息提示
+                yield f"event: info\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            
             elif msg["type"] == "content":
                 full_response += msg["content"]
-                yield f"data: {json.dumps({'content': msg['content']})}\n\n"
+                yield f"data: {json.dumps({'content': msg['content']}, ensure_ascii=False)}\n\n"
+            
             elif msg["type"] == "done":
                 pass
         
@@ -121,7 +132,7 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         await db.commit()
         
         # 发送完成信号
-        yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'agent': agent_type})}\n\n"
+        yield f"event: done\ndata: {json.dumps({'done': True, 'session_id': session_id, 'agent': agent_type}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
         generate(),

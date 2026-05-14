@@ -4,8 +4,9 @@
 负责：
 - 从知识库检索相关信息
 - 结合检索结果生成回答
+- 返回找到的文章信息
 """
-from typing import AsyncGenerator, List, Dict
+from typing import AsyncGenerator, List, Dict, Any
 from loguru import logger
 
 from app.core.llm import llm_client
@@ -39,7 +40,7 @@ class KnowledgeAgent:
         stream: bool = True
     ) -> AsyncGenerator[str, None]:
         """
-        搜索知识库并生成回答
+        搜索知识库并生成回答（简单版本，只返回内容）
         
         Args:
             query: 用户查询
@@ -48,6 +49,25 @@ class KnowledgeAgent:
         Yields:
             str: 回复内容片段
         """
+        async for msg in self.search_and_answer_with_info(query, stream):
+            if msg["type"] == "content":
+                yield msg["content"]
+    
+    async def search_and_answer_with_info(
+        self,
+        query: str,
+        stream: bool = True
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        搜索知识库并生成回答（带详细信息）
+        
+        Args:
+            query: 用户查询
+            stream: 是否流式输出
+        
+        Yields:
+            Dict: 包含类型、内容、找到的文章等信息
+        """
         logger.info(f"知识库查询: {query[:50]}...")
         
         # 检索相关文档
@@ -55,8 +75,38 @@ class KnowledgeAgent:
             search_results = await retriever.search(db, query, top_k=3)
         
         if not search_results:
-            yield "抱歉，知识库中没有找到相关信息。"
+            yield {
+                "type": "info",
+                "message": "📚 在知识库中未找到相关信息"
+            }
+            yield {"type": "content", "content": "抱歉，知识库中没有找到相关信息。"}
             return
+        
+        # 发送找到的文章信息
+        articles_info = []
+        seen_sources = set()
+        for i, result in enumerate(search_results, 1):
+            source = result.metadata.get("_source", "未知来源")
+            score = result.score
+            
+            # 去重显示来源
+            if source not in seen_sources:
+                seen_sources.add(source)
+                # 从 URL 提取文章名
+                article_name = source.split("/")[-1] if "/" in source else source
+                articles_info.append({
+                    "index": i,
+                    "source": source,
+                    "name": article_name,
+                    "score": score,
+                    "preview": result.content[:50] + "..."
+                })
+        
+        yield {
+            "type": "knowledge_sources",
+            "message": f"📚 找到 {len(search_results)} 条相关文档，来自 {len(articles_info)} 篇文章",
+            "articles": articles_info
+        }
         
         # 构建上下文
         context = self._build_context(search_results)
@@ -73,11 +123,11 @@ class KnowledgeAgent:
         if stream:
             async for chunk in llm_client.chat_stream(messages):
                 full_response += chunk
-                yield chunk
+                yield {"type": "content", "content": chunk}
         else:
             response = await llm_client.chat(messages)
             full_response = response
-            yield response
+            yield {"type": "content", "content": response}
         
         logger.info(f"知识库回答完成: {full_response[:50]}...")
     

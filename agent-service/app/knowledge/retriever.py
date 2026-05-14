@@ -60,14 +60,15 @@ class Retriever:
         query_embedding = await embedding_service.embed_query(query)
         
         # pgvector 相似度搜索（使用余弦距离）
+        # 使用 CAST 代替 :: 语法
         sql = text("""
             SELECT 
-                id::text,
+                CAST(id AS TEXT) as id,
                 content,
                 metadata,
-                1 - (embedding <=> :query_embedding::vector) as similarity
+                1 - (embedding <=> CAST(:query_embedding AS vector)) as similarity
             FROM knowledge_chunks
-            ORDER BY embedding <=> :query_embedding::vector
+            ORDER BY embedding <=> CAST(:query_embedding AS vector)
             LIMIT :top_k
         """)
         
