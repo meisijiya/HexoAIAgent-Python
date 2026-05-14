@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hexo Agent 测试页面</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 800px;
+            height: 600px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+        
+        .header p {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+        
+        .status-bar {
+            background: #f8f9fa;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 14px;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #dc3545;
+        }
+        
+        .status-dot.connected {
+            background: #28a745;
+        }
+        
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+        
+        .message.user {
+            align-self: flex-end;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        
+        .message.assistant {
+            align-self: flex-start;
+            background: #f1f3f5;
+            color: #333;
+            border-bottom-left-radius: 4px;
+        }
+        
+        .message.system {
+            align-self: center;
+            background: #fff3cd;
+            color: #856404;
+            font-size: 13px;
+            max-width: 90%;
+            text-align: center;
+        }
+        
+        .input-area {
+            padding: 20px;
+            border-top: 1px solid #e9ecef;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .input-area input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 25px;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        
+        .input-area input:focus {
+            border-color: #667eea;
+        }
+        
+        .input-area button {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .input-area button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .input-area button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .typing-indicator {
+            display: none;
+            align-self: flex-start;
+            padding: 12px 16px;
+            background: #f1f3f5;
+            border-radius: 18px;
+            border-bottom-left-radius: 4px;
+        }
+        
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #999;
+            border-radius: 50%;
+            margin: 0 2px;
+            animation: typing 1.4s infinite;
+        }
+        
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+            }
+            30% {
+                transform: translateY(-5px);
+            }
+        }
+        
+        .login-section {
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .login-section button {
+            padding: 12px 24px;
+            background: #333;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        
+        .login-section button.anonymous {
+            background: #6c757d;
+        }
+        
+        .login-section button:hover {
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Hexo Agent 测试</h1>
+            <p>对话 Agent 功能测试页面</p>
+        </div>
+        
+        <div class="status-bar">
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">未连接</span>
+            </div>
+            <div>
+                <span id="userInfo">未登录</span>
+            </div>
+        </div>
+        
+        <div class="messages" id="messages">
+            <div class="message system">
+                欢迎使用 Hexo Agent 测试页面！请先登录或以匿名身份开始对话。
+            </div>
+        </div>
+        
+        <div class="typing-indicator" id="typingIndicator">
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+        
+        <div class="input-area" id="inputArea" style="display: none;">
+            <input type="text" id="messageInput" placeholder="输入消息..." disabled>
+            <button id="sendButton" disabled>发送</button>
+        </div>
+        
+        <div class="login-section" id="loginSection">
+            <button onclick="loginAnonymous()">匿名登录</button>
+            <button onclick="loginGithub()">GitHub 登录</button>
+        </div>
+    </div>
+
+    <script>
+        // 配置
+        const API_BASE_URL = 'http://localhost:8000';
+        
+        // 状态
+        let token = localStorage.getItem('agent_token');
+        let sessionId = null;
+        let isProcessing = false;
+        
+        // DOM 元素
+        const messagesDiv = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const userInfo = document.getElementById('userInfo');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const inputArea = document.getElementById('inputArea');
+        const loginSection = document.getElementById('loginSection');
+        
+        // 初始化
+        async function init() {
+            if (token) {
+                await checkToken();
+            }
+        }
+        
+        // 检查 Token
+        async function checkToken() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/auth/me?token=${token}`);
+                if (response.ok) {
+                    const user = await response.json();
+                    onLoginSuccess(user);
+                } else {
+                    token = null;
+                    localStorage.removeItem('agent_token');
+                }
+            } catch (error) {
+                console.error('检查 Token 失败:', error);
+            }
+        }
+        
+        // 匿名登录
+        async function loginAnonymous() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/auth/anonymous`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    token = data.token;
+                    localStorage.setItem('agent_token', token);
+                    onLoginSuccess(data.user);
+                } else {
+                    alert('登录失败');
+                }
+            } catch (error) {
+                console.error('匿名登录失败:', error);
+                alert('登录失败: ' + error.message);
+            }
+        }
+        
+        // GitHub 登录
+        async function loginGithub() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/auth/github`);
+                const data = await response.json();
+                window.location.href = data.authorize_url;
+            } catch (error) {
+                console.error('获取 GitHub 登录链接失败:', error);
+                alert('登录失败: ' + error.message);
+            }
+        }
+        
+        // 登录成功回调
+        function onLoginSuccess(user) {
+            statusDot.classList.add('connected');
+            statusText.textContent = '已连接';
+            userInfo.textContent = user.nickname || '用户';
+            
+            inputArea.style.display = 'flex';
+            loginSection.style.display = 'none';
+            messageInput.disabled = false;
+            sendButton.disabled = false;
+            
+            addMessage('system', `欢迎, ${user.nickname}！现在可以开始对话了。`);
+        }
+        
+        // 添加消息到界面
+        function addMessage(role, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            messageDiv.textContent = content;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        // 发送消息
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || isProcessing) return;
+            
+            isProcessing = true;
+            messageInput.value = '';
+            sendButton.disabled = true;
+            
+            // 显示用户消息
+            addMessage('user', message);
+            
+            // 显示加载状态
+            typingIndicator.style.display = 'block';
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        session_id: sessionId,
+                        token: token
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('请求失败');
+                }
+                
+                // 处理流式响应
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let assistantMessage = '';
+                let messageDiv = null;
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                
+                                if (data.done) {
+                                    sessionId = data.session_id;
+                                } else if (data.content) {
+                                    if (!messageDiv) {
+                                        typingIndicator.style.display = 'none';
+                                        messageDiv = document.createElement('div');
+                                        messageDiv.className = 'message assistant';
+                                        messagesDiv.appendChild(messageDiv);
+                                    }
+                                    assistantMessage += data.content;
+                                    messageDiv.textContent = assistantMessage;
+                                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                                }
+                            } catch (e) {
+                                // 忽略解析错误
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('发送消息失败:', error);
+                addMessage('system', '发送消息失败: ' + error.message);
+            } finally {
+                isProcessing = false;
+                sendButton.disabled = false;
+                typingIndicator.style.display = 'none';
+                messageInput.focus();
+            }
+        }
+        
+        // 事件监听
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        
+        // 初始化
+        init();
+    </script>
+</body>
+</html>
