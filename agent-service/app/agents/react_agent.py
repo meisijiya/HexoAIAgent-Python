@@ -1,17 +1,22 @@
 """
-ReAct Agent 模块
+ReAct Agent 模块（优化版）
 
 实现 ReAct（Reasoning + Acting）设计模式：
 - 思考（Reasoning）：分析问题，制定计划
 - 行动（Acting）：调用工具获取信息
 - 观察（Observing）：查看工具返回结果
 - 循环直到得到最终答案
+
+改进点：
+- 集成对话历史管理
+- 支持上下文理解
 """
 import json
 from typing import AsyncGenerator, Dict, Any, List
 from loguru import logger
 
 from app.core.llm import llm_client
+from app.core.history_manager import history_manager
 from app.agents.tools import tool_collection
 
 
@@ -19,6 +24,8 @@ from app.agents.tools import tool_collection
 REACT_PROMPT = """你是一个智能助手，可以使用工具来回答问题。
 
 {tools_description}
+
+{history_section}
 
 请严格按照以下格式回答问题：
 
@@ -44,17 +51,21 @@ Final Answer: 最终答案
 
 class ReActAgent:
     """
-    ReAct Agent
+    ReAct Agent（优化版）
     
-    实现思考-行动-观察循环
+    改进点：
+    1. 集成对话历史管理
+    2. 支持上下文理解
+    3. 优化工具调用逻辑
     """
     
     def __init__(self):
-        self.max_iterations = 5  # 最大循环次数
+        self.max_iterations = 5
     
     async def process(
         self,
         query: str,
+        session_id: str = None,
         stream: bool = True
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
@@ -62,6 +73,7 @@ class ReActAgent:
         
         Args:
             query: 用户查询
+            session_id: 会话 ID（用于获取历史）
             stream: 是否流式输出
         
         Yields:
@@ -70,16 +82,29 @@ class ReActAgent:
         
         logger.info(f"ReAct Agent 开始处理: {query[:50]}...")
         
-        # 构建初始 Prompt
+        # 1. 获取对话历史
+        history = ""
+        if session_id:
+            history = await history_manager.get_history(session_id)
+        
+        # 2. 构建 Prompt
         tools_description = tool_collection.get_tools_description()
+        
+        history_section = ""
+        if history:
+            history_section = f"## 对话历史\n{history}\n"
+        
         prompt = REACT_PROMPT.format(
             tools_description=tools_description,
+            history_section=history_section,
             query=query
         )
         
         messages = [{"role": "user", "content": prompt}]
         
-        # 循环执行
+        # 3. ReAct 循环
+        full_response = ""
+        
         for iteration in range(self.max_iterations):
             logger.info(f"ReAct 循环 {iteration + 1}/{self.max_iterations}")
             
@@ -100,11 +125,12 @@ class ReActAgent:
             # 如果有最终答案，结束循环
             if final_answer:
                 logger.info(f"ReAct Agent 完成，迭代次数: {iteration + 1}")
+                full_response = final_answer
                 yield {
                     "type": "content",
                     "content": final_answer
                 }
-                return
+                break
             
             # 如果需要调用工具
             if action:
@@ -127,30 +153,30 @@ class ReActAgent:
                 messages.append({"role": "assistant", "content": response})
                 messages.append({"role": "user", "content": f"Observation: {observation}\n\n请继续思考并给出答案。"})
             else:
-                # 没有工具调用也没有最终答案，可能是格式错误
-                logger.warning(f"ReAct 响应格式异常: {response[:100]}...")
+                # 没有工具调用也没有最终答案
+                full_response = response
                 yield {
                     "type": "content",
                     "content": response
                 }
-                return
+                break
+        else:
+            # 达到最大循环次数
+            logger.warning(f"ReAct Agent 达到最大循环次数: {self.max_iterations}")
+            full_response = "抱歉，我无法在有限步骤内回答这个问题。请尝试更具体的描述。"
+            yield {
+                "type": "content",
+                "content": full_response
+            }
         
-        # 达到最大循环次数
-        logger.warning(f"ReAct Agent 达到最大循环次数: {self.max_iterations}")
-        yield {
-            "type": "content",
-            "content": "抱歉，我无法在有限步骤内回答这个问题。请尝试更具体的描述。"
-        }
+        # 4. 保存到历史
+        if session_id:
+            await history_manager.save_message(session_id, "user", query)
+            await history_manager.save_message(session_id, "assistant", full_response)
     
     def _parse_response(self, response: str) -> tuple:
         """
         解析 LLM 响应
-        
-        Args:
-            response: LLM 响应文本
-        
-        Returns:
-            tuple: (thought, action, action_input, final_answer)
         """
         
         thought = None
@@ -167,7 +193,6 @@ class ReActAgent:
             line = line.strip()
             
             if line.startswith("Thought:"):
-                # 保存之前的 section
                 if current_section == "action_input" and current_content:
                     try:
                         action_input = json.loads("\n".join(current_content))

@@ -1,16 +1,18 @@
 """
-对话 Agent 模块
+对话 Agent 模块（优化版）
 
 负责：
 - 处理用户对话
 - 管理对话上下文
 - 生成回复
+- 集成对话历史管理
 """
 from typing import AsyncGenerator, List, Dict, Optional
 from loguru import logger
 
 from app.core.llm import llm_client
-from app.core.redis import get_session_context, add_message_to_context
+from app.core.history_manager import history_manager
+from app.core.prompt_builder import chat_prompt_builder
 
 
 # 系统提示词
@@ -21,24 +23,24 @@ SYSTEM_PROMPT = """你是一个友好的 AI 助手，专门帮助用户解答关
 2. 回答简洁明了，避免冗长
 3. 如果不确定答案，诚实地说不知道
 4. 使用中文回复
+5. 记住之前的对话内容，保持连贯性
 
 请根据用户的问题提供有帮助的回答。"""
 
 
 class ChatAgent:
     """
-    对话 Agent
+    对话 Agent（优化版）
     
-    处理用户对话，支持上下文记忆
+    改进点：
+    1. 集成对话历史管理
+    2. 使用结构化 Prompt 构建
+    3. 支持多轮对话上下文
     """
-    
-    def __init__(self):
-        """初始化对话 Agent"""
-        self.system_prompt = SYSTEM_PROMPT
     
     async def chat(
         self,
-        user_message: str,
+        message: str,
         session_id: str,
         stream: bool = True
     ) -> AsyncGenerator[str, None]:
@@ -46,25 +48,22 @@ class ChatAgent:
         处理用户对话
         
         Args:
-            user_message: 用户消息
+            message: 用户消息
             session_id: 会话 ID
             stream: 是否流式输出
         
         Yields:
             str: 回复内容片段
         """
-        logger.info(f"收到用户消息: {user_message[:50]}...")
+        logger.info(f"对话 Agent 处理: {message[:50]}...")
         
-        # 获取历史上下文
-        context = await get_session_context(session_id)
+        # 1. 获取对话历史
+        history = await history_manager.get_history(session_id)
         
-        # 构建消息列表
-        messages = self._build_messages(user_message, context)
+        # 2. 构建带历史的消息
+        messages = self._build_messages(message, history)
         
-        # 保存用户消息到上下文
-        await add_message_to_context(session_id, "user", user_message)
-        
-        # 调用 LLM 生成回复
+        # 3. 调用 LLM 生成回复
         full_response = ""
         
         if stream:
@@ -76,42 +75,34 @@ class ChatAgent:
             full_response = response
             yield response
         
-        # 保存助手回复到上下文
-        await add_message_to_context(session_id, "assistant", full_response)
+        # 4. 保存到历史
+        await history_manager.save_message(session_id, "user", message)
+        await history_manager.save_message(session_id, "assistant", full_response)
         
-        logger.info(f"回复完成: {full_response[:50]}...")
+        logger.info(f"对话 Agent 回复完成: {full_response[:50]}...")
     
-    def _build_messages(
-        self,
-        user_message: str,
-        context: List[Dict[str, str]]
-    ) -> List[Dict[str, str]]:
+    def _build_messages(self, message: str, history: str) -> List[Dict[str, str]]:
         """
-        构建消息列表
+        构建消息列表（带历史）
         
         Args:
-            user_message: 用户消息
-            context: 历史上下文
+            message: 用户消息
+            history: 对话历史
         
         Returns:
-            List[Dict[str, str]]: 消息列表
+            List[Dict]: 消息列表
         """
-        messages = [
-            {"role": "system", "content": self.system_prompt}
-        ]
+        messages = []
         
-        # 添加历史上下文（最多 10 条）
-        for msg in context[-10:]:
-            messages.append({
-                "role": msg["role"],
-                "content": msg["content"]
-            })
+        # 系统提示词（包含历史）
+        system_content = SYSTEM_PROMPT
+        if history:
+            system_content += f"\n\n## 对话历史\n{history}"
         
-        # 添加当前用户消息
-        messages.append({
-            "role": "user",
-            "content": user_message
-        })
+        messages.append({"role": "system", "content": system_content})
+        
+        # 用户消息
+        messages.append({"role": "user", "content": message})
         
         return messages
 

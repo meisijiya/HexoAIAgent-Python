@@ -1,11 +1,12 @@
 """
-Agent 调度器模块（优化版）
+Agent 调度器模块（优化版 v2）
 
 负责：
 - 分析用户意图（优化：快速判断优先，减少 LLM 调用）
 - 路由到合适的 Agent
 - 协调多个 Agent 协作
 - 支持 ReAct 模式（思考-行动-观察循环）
+- 传递 session_id 给所有 Agent
 """
 from typing import AsyncGenerator, Dict, Any, Optional
 from enum import Enum
@@ -52,12 +53,13 @@ Agent 类型：
 
 class Orchestrator:
     """
-    Agent 调度器（优化版）
+    Agent 调度器（优化版 v2）
     
     优化策略：
     1. 命令优先（/搜索、/知识库、/react）
     2. 快速关键词判断（80% 的情况）
     3. LLM 判断兜底（20% 的情况）
+    4. 传递 session_id 给所有 Agent
     """
     
     async def process(
@@ -84,17 +86,17 @@ class Orchestrator:
             "message": f"🤖 正在调用 {agent_name}..."
         }
         
-        # 调用对应的 Agent
+        # 调用对应的 Agent（传递 session_id）
         if agent_type == AgentType.KNOWLEDGE:
-            async for msg in knowledge_agent.search_and_answer_with_info(message, stream):
+            async for msg in knowledge_agent.search_and_answer_with_info(message, session_id, stream):
                 yield msg
                 
         elif agent_type == AgentType.SEARCH:
-            async for chunk in search_agent.search_and_answer(message, stream):
+            async for chunk in search_agent.search_and_answer(message, session_id, stream):
                 yield {"type": "content", "content": chunk}
                 
         elif agent_type == AgentType.REACT:
-            async for msg in react_agent.process(message, stream):
+            async for msg in react_agent.process(message, session_id, stream):
                 yield msg
                 
         else:  # CHAT
@@ -139,7 +141,6 @@ class Orchestrator:
         """
         
         # ========== 搜索请求判断 ==========
-        # 用户明确要求搜索，或需要最新信息
         search_patterns = [
             "搜索", "搜一下", "查一下", "查找",
             "最新", "新闻", "今天", "现在", "最近",
@@ -150,7 +151,6 @@ class Orchestrator:
                 return AgentType.SEARCH
         
         # ========== ReAct 复杂推理判断 ==========
-        # 需要多步推理、对比分析
         react_patterns = [
             "对比", "比较", "分析", "总结", "推荐",
             "方案", "选择", "优缺点", "利弊",
@@ -161,7 +161,6 @@ class Orchestrator:
                 return AgentType.REACT
         
         # ========== 知识库问答判断 ==========
-        # 技术问题、需要文档支持
         knowledge_patterns = [
             "怎么", "如何", "为什么", "是什么",
             "教程", "配置", "安装", "部署", "实现",
@@ -173,7 +172,6 @@ class Orchestrator:
                 return AgentType.KNOWLEDGE
         
         # ========== 技术栈关键词判断 ==========
-        # 涉及具体技术，可能是知识库问题
         tech_keywords = [
             "Redis", "MySQL", "Docker", "Hexo", "Git",
             "Python", "Java", "JavaScript", "Node.js",
@@ -187,7 +185,6 @@ class Orchestrator:
                 return AgentType.KNOWLEDGE
         
         # ========== 闲聊判断 ==========
-        # 简单问候、感谢等
         chat_patterns = [
             "你好", "谢谢", "再见", "早上好", "晚安",
             "嗯", "好的", "OK", "ok", "是的", "不是",
