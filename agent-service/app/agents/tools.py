@@ -56,7 +56,7 @@ class SearchKnowledgeTool(Tool):
                 results = await retriever.search(db, query, top_k=3, dynamic=False)
             
             if not results:
-                return f"知识库中没有找到关于"{query}"的相关文档"
+                return f"知识库中没有找到关于'{query}'的相关文档"
             
             # 格式化结果
             formatted = []
@@ -109,7 +109,7 @@ class GetArticleTool(Tool):
                 articles = result.scalars().all()
                 
                 if not articles:
-                    return f"没有找到标题包含"{article_title}"的文章"
+                    return f"没有找到标题包含'{article_title}'的文章"
                 
                 # 返回第一篇文章
                 article = articles[0]
@@ -210,7 +210,7 @@ class ToolCollection:
         tool = self.get_tool(tool_name)
         
         if not tool:
-            return f"错误：工具 "{tool_name}" 不存在。可用工具：{', '.join(self.tools.keys())}"
+            return f"错误：工具 '{tool_name}' 不存在。可用工具：{', '.join(self.tools.keys())}"
         
         try:
             logger.info(f"调用工具: {tool_name}, 参数: {tool_input}")
