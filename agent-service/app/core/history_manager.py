@@ -184,7 +184,12 @@ class HistoryManager:
             except Exception as e:
                 logger.error(f"语义检索失败: {e}")
 
-        # 3. 合并：旧语义历史在前，近期对话在后
+        # 3. 合并：语义历史（标注为可回顾）+ 近期对话
+        if semantic_messages:
+            semantic_messages.insert(0, {
+                "role": "system",
+                "content": "📝 以下是你们过去聊过的历史话题（用户问及过去时可以引用）："
+            })
         all_messages = semantic_messages + recent_messages
 
         if not all_messages:
@@ -273,15 +278,18 @@ class HistoryManager:
             sim = self._cosine_similarity(query_embedding, mem.embedding)
             scored.append((sim, mem))
 
-        # 5. 按相似度排序取 top_k
+        # 5. 按相似度排序取 top_k，过滤低于阈值的弱匹配
         scored.sort(key=lambda x: x[0], reverse=True)
-        top = scored[:top_k]
+        SIMILARITY_THRESHOLD = 0.45  # 低于此值视为不相关
+        top = [(sim, mem) for sim, mem in scored[:top_k] if sim >= SIMILARITY_THRESHOLD]
 
+        top_scores = [f"{sim:.3f}" for sim, _ in top] if top else ["无"]
         logger.info(
             f"语义检索: session={session_id[:8]}..., "
             f"query='{query[:30]}...', "
             f"top_k={top_k}, "
-            f"found={len(top)} results"
+            f"found={len(top)} results, "
+            f"scores=[{', '.join(top_scores)}]"
         )
 
         return [
