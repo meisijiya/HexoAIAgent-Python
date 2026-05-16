@@ -191,6 +191,7 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                     await history_manager.save_batch_memory(
                         session_id, batch_label, user_text, db
                     )
+                    await db.commit()  # 提交批次写入事务
         except Exception as e:
             logger.warning(f"批次语义记忆写入失败（不阻塞主流程）: {e}")
 
