@@ -248,9 +248,11 @@ class ChatAgent:
         # 语义记忆召回提示
         sem_info = history_manager._last_semantic_info
         if sem_info.get("found"):
+            previews = sem_info.get("previews", [])
             yield {
                 "type": "semantic_recall",
                 "count": sem_info["count"],
+                "previews": previews,
                 "message": f"🧠 回忆了 {sem_info['count']} 个历史话题"
             }
 

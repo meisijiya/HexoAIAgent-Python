@@ -680,9 +680,23 @@
     background: rgba(139, 92, 246, 0.08);
     border: 1px solid rgba(139, 92, 246, 0.2);
     border-radius: 10px;
-    padding: 3px 10px;
+    padding: 4px 12px;
     margin: 2px 0;
     transition: opacity 0.5s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    max-width: 85%;
+}
+.semantic-recall-preview {
+    font-size: 10px;
+    color: #a78bfa;
+    opacity: 0.7;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Scroll-to-bottom button */

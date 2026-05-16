@@ -186,14 +186,19 @@ class HistoryManager:
                 logger.error(f"语义检索失败: {e}")
 
         # 3. 合并：语义历史（标注为可回顾）+ 近期对话
-        if semantic_messages:
+            if semantic_messages:
             semantic_messages.insert(0, {
                 "role": "system",
                 "content": "📝 以下是你们过去聊过的历史话题（用户问及过去时可以引用）："
             })
+            previews = [
+                m.get("content", "")[:60].replace("\n", " ")
+                for m in semantic_messages[1:]  # 跳过标题行
+            ]
             self._last_semantic_info = {
                 "found": True,
-                "count": len(semantic_messages) - 1,  # 减去标题行
+                "count": len(previews),
+                "previews": previews,
                 "query": query[:50] if query else ""
             }
         else:

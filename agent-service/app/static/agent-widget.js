@@ -274,17 +274,22 @@
         scrollToBottom();
     }
 
-    /** 语义记忆召回提示——小徽章，不占整行 */
-    function addSemanticRecallBadge(message) {
+    /** 语义记忆召回提示——小徽章，显示话题摘要 */
+    function addSemanticRecallBadge(data) {
         var el = document.createElement('div');
         el.className = 'hexo-agent-semantic-recall';
-        el.textContent = message;
+        var previewText = (data.previews && data.previews.length > 0)
+            ? data.previews[0]
+            : '';
+        el.innerHTML = '<span class="semantic-recall-icon">🧠</span>'
+            + '<span class="semantic-recall-text">' + escapeHtml(data.message) + '</span>'
+            + (previewText ? '<span class="semantic-recall-preview">' + escapeHtml(previewText) + '…</span>' : '');
         $('#agentMessages').appendChild(el);
         scrollToBottom();
         setTimeout(function() {
             el.style.opacity = '0';
             setTimeout(function() { if (el.parentNode) el.remove(); }, 500);
-        }, 4000);
+        }, 5000);
     }
 
     function addSources(articles) {
@@ -608,7 +613,7 @@
                             } else if (eventType === 'info') {
                                 addInfoBubble(data.message);
                             } else if (eventType === 'semantic_recall') {
-                                addSemanticRecallBadge(data.message);
+                                addSemanticRecallBadge(data);
                             } else if (eventType === 'sources') {
                                 addSources(data.articles);
                             } else if (eventType === 'search_options') {
