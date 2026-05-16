@@ -245,6 +245,15 @@ class ChatAgent:
             db=db
         )
 
+        # 语义记忆召回提示
+        sem_info = history_manager._last_semantic_info
+        if sem_info.get("found"):
+            yield {
+                "type": "semantic_recall",
+                "count": sem_info["count"],
+                "message": f"🧠 回忆了 {sem_info['count']} 个历史话题"
+            }
+
         # ==================== Phase1：轻量 LLM 路由分类 ====================
         route_prompt = self._build_route_prompt(message, history)
         route_messages = [{"role": "user", "content": route_prompt}]

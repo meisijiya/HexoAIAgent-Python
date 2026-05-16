@@ -274,6 +274,19 @@
         scrollToBottom();
     }
 
+    /** 语义记忆召回提示——小徽章，不占整行 */
+    function addSemanticRecallBadge(message) {
+        var el = document.createElement('div');
+        el.className = 'hexo-agent-semantic-recall';
+        el.textContent = message;
+        $('#agentMessages').appendChild(el);
+        scrollToBottom();
+        setTimeout(function() {
+            el.style.opacity = '0';
+            setTimeout(function() { if (el.parentNode) el.remove(); }, 500);
+        }, 4000);
+    }
+
     function addSources(articles) {
         let html = '<div class="sources-header">参考来源</div><ul class="hexo-agent-sources-list">';
         articles.forEach(a => {
@@ -594,6 +607,8 @@
                                 showTyping();
                             } else if (eventType === 'info') {
                                 addInfoBubble(data.message);
+                            } else if (eventType === 'semantic_recall') {
+                                addSemanticRecallBadge(data.message);
                             } else if (eventType === 'sources') {
                                 addSources(data.articles);
                             } else if (eventType === 'search_options') {

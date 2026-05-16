@@ -143,6 +143,9 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
             elif msg_type == "react_formatted":
                 yield f"event: react_formatted\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
 
+            elif msg_type == "semantic_recall":
+                yield f"event: semantic_recall\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+
             elif msg_type == "content":
                 full_response += msg.get("content", "")
                 yield f"data: {json.dumps({'content': msg.get('content', '')}, ensure_ascii=False)}\n\n"

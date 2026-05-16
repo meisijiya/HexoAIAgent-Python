@@ -50,6 +50,7 @@ class HistoryManager:
         self.max_tokens = max_tokens
         self.max_message_length = max_message_length
         self._encoding = tiktoken.get_encoding(TIKTOKEN_ENCODING)
+        self._last_semantic_info = {}  # 最近一次语义检索结果
 
     # ==================== Token 精确计数 ====================
 
@@ -190,6 +191,13 @@ class HistoryManager:
                 "role": "system",
                 "content": "📝 以下是你们过去聊过的历史话题（用户问及过去时可以引用）："
             })
+            self._last_semantic_info = {
+                "found": True,
+                "count": len(semantic_messages) - 1,  # 减去标题行
+                "query": query[:50] if query else ""
+            }
+        else:
+            self._last_semantic_info = {"found": False, "count": 0}
         all_messages = semantic_messages + recent_messages
 
         if not all_messages:

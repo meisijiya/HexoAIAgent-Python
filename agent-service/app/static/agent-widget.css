@@ -672,6 +672,19 @@
 .hexo-agent-login-btn.github { background: #24292e; color: white; }
 .hexo-agent-login-btn.anonymous { background: var(--agent-border); color: var(--agent-text); }
 
+/* Semantic recall badge */
+.hexo-agent-semantic-recall {
+    align-self: center;
+    font-size: 11px;
+    color: #8b5cf6;
+    background: rgba(139, 92, 246, 0.08);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-radius: 10px;
+    padding: 3px 10px;
+    margin: 2px 0;
+    transition: opacity 0.5s;
+}
+
 /* Scroll-to-bottom button */
 .hexo-agent-scroll-down-wrap {
     position: relative;
