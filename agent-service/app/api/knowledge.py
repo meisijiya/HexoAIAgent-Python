@@ -36,6 +36,9 @@ class ArticleCreate(BaseModel):
     url: Optional[str] = None
     content: str
     source: str = "manual"
+    date: Optional[str] = None
+    categories: Optional[List[str]] = []
+    tags: Optional[List[str]] = []
 
 
 class SearchRequest(BaseModel):
@@ -91,11 +94,13 @@ async def create_article(article: ArticleCreate, db: AsyncSession = Depends(get_
         
         # 保存分块和向量（带元数据）
         for chunk_data, embedding in zip(chunks, embeddings):
-            # 更新 metadata，添加分类和标签
+            # 更新 metadata，添加分类、标签和日期
             metadata = chunk_data["metadata"]
             metadata["categories"] = categories
             metadata["tags"] = tags
             metadata["title"] = article.title
+            if article.date:
+                metadata["date"] = article.date
             
             db_chunk = Chunk(
                 article_id=db_article.id,

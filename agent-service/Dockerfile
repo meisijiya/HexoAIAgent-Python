@@ -1,6 +1,6 @@
 # ==================== 多阶段构建 ====================
 # 构建阶段
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
@@ -25,9 +25,9 @@ COPY . .
 # 暴露端口
 EXPOSE 8000
 
-# 健康检查
+# 健康检查（使用 python 内置 urllib，无需额外安装 curl）
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 # 启动命令
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

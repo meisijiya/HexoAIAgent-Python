@@ -15,7 +15,7 @@ from loguru import logger
 
 from app.core.database import get_db
 from app.core.redis import check_rate_limit
-from app.core.orchestrator import orchestrator
+from app.agents.chat_agent import chat_agent
 from app.models.user import User
 from app.models.session import Session
 from app.models.message import Message
@@ -37,7 +37,7 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
     """
     对话接口（流式输出）
     
-    使用调度器协调多个 Agent，根据用户意图自动路由
+    ChatAgent 作为唯一入口，LLM 判断意图后路由到对应子 Agent
     
     Args:
         request: 对话请求
@@ -95,29 +95,58 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         full_response = ""
         agent_type = "chat"
         
-        async for msg in orchestrator.process(
+        async for msg in chat_agent.process(
             request.message,
             session_id,
-            request.command
+            force_tool=request.command if request.command else None
         ):
-            # 根据消息类型发送不同的 SSE 事件
-            if msg["type"] == "routing":
-                agent_type = msg["agent"]
+            msg_type = msg.get("type", "content")
+            
+            if msg_type == "routing":
+                agent_type = msg.get("agent", "chat")
                 yield f"event: routing\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
             
-            elif msg["type"] == "knowledge_sources":
-                # 知识库找到的文章信息
-                yield f"event: sources\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            elif msg_type == "tool_call":
+                yield f"event: tool_call\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
             
-            elif msg["type"] == "info":
-                # 信息提示
+            elif msg_type == "articles":
+                yield f"event: articles\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            
+            elif msg_type == "info":
                 yield f"event: info\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
             
-            elif msg["type"] == "content":
-                full_response += msg["content"]
-                yield f"data: {json.dumps({'content': msg['content']}, ensure_ascii=False)}\n\n"
+            elif msg_type == "error":
+                yield f"event: error\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
             
-            elif msg["type"] == "done":
+            elif msg_type == "options":
+                yield f"event: options\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            
+            elif msg_type == "search_options":
+                yield f"event: search_options\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            
+            elif msg_type == "knowledge_sources":
+                yield f"event: knowledge_sources\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            
+            elif msg_type == "search_sources":
+                yield f"event: search_sources\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            
+            elif msg_type == "react_action":
+                yield f"event: react_action\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            
+            elif msg_type == "react_observation":
+                yield f"event: react_observation\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+
+            elif msg_type == "react_search_results":
+                yield f"event: react_search_results\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+
+            elif msg_type == "react_formatted":
+                yield f"event: react_formatted\ndata: {json.dumps(msg, ensure_ascii=False)}\n\n"
+
+            elif msg_type == "content":
+                full_response += msg.get("content", "")
+                yield f"data: {json.dumps({'content': msg.get('content', '')}, ensure_ascii=False)}\n\n"
+            
+            elif msg_type == "done":
                 pass
         
         # 保存助手回复到数据库

@@ -1,11 +1,12 @@
 """
-知识库 Agent 模块（优化版 v5）
+知识库 Agent 模块（优化版 v6）
 
 负责：
 - 从知识库检索相关信息
 - 结合检索结果生成回答
 - 返回找到的文章信息（带可点击链接）
-- 集成容错处理
+- 知识库无匹配时自动 fallback 到 LLM 自身知识
+- 提示用户是否需要上网搜索（立即显示选项）
 - 使用结构化 Prompt 构建
 - 集成对话历史管理
 """
@@ -17,7 +18,6 @@ from app.core.prompt_builder import knowledge_prompt_builder
 from app.core.history_manager import history_manager
 from app.knowledge.retriever import retriever, SearchResult
 from app.core.database import async_session_maker
-from app.agents.error_handler import error_handler
 
 
 # 博客基础 URL（用于生成文章链接）
@@ -26,12 +26,35 @@ BLOG_BASE_URL = "https://meisijiya.github.io"
 
 class KnowledgeAgent:
     """
-    知识库 Agent（优化版 v5）
+    知识库 Agent（优化版 v6）
     
     改进点：
     1. 参考资料显示为可点击链接
     2. 生成博客文章的完整 URL
+    3. 知识库无匹配时自动 fallback 到 LLM 自身知识
+    4. 提示用户是否需要上网搜索（立即显示选项）
     """
+    
+    async def process(
+        self,
+        message: str,
+        session_id: str = None,
+        stream: bool = True
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        处理用户消息（Orchestrator 调用入口）
+        
+        Args:
+            message: 用户消息
+            session_id: 会话 ID
+            stream: 是否流式输出
+            
+        Yields:
+            Dict[str, Any]: 处理结果
+        """
+        yield {"type": "routing", "agent": "knowledge", "message": "正在检索知识库..."}
+        async for msg in self.search_and_answer_with_info(message, session_id, stream):
+             yield msg
     
     async def search_and_answer(
         self,
@@ -39,9 +62,7 @@ class KnowledgeAgent:
         session_id: str = None,
         stream: bool = True
     ) -> AsyncGenerator[str, None]:
-        """
-        搜索知识库并生成回答（简单版本）
-        """
+        """搜索知识库并生成回答（简单版本）"""
         async for msg in self.search_and_answer_with_info(query, session_id, stream):
             if msg["type"] == "content":
                 yield msg["content"]
@@ -52,9 +73,7 @@ class KnowledgeAgent:
         session_id: str = None,
         stream: bool = True
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        搜索知识库并生成回答（带详细信息）
-        """
+        """搜索知识库并生成回答（带详细信息）"""
         logger.info(f"知识库查询: {query[:50]}...")
         
         # 1. 获取对话历史
@@ -66,12 +85,42 @@ class KnowledgeAgent:
         async with async_session_maker() as db:
             search_results = await retriever.search(db, query, dynamic=True)
         
-        # 3. 如果没有找到结果，触发容错处理
-        if not search_results:
-            logger.info(f"知识库无匹配，触发容错处理")
-            yield {"type": "info", "message": "📚 在知识库中未找到相关信息"}
-            async for msg in error_handler.handle_no_results(query):
-                yield msg
+        # 3. 知识库无匹配或相似度过低 → 提示用户 + fallback 到 LLM 自身知识
+        max_score = max((r.score for r in search_results), default=0)
+        if not search_results or max_score < 0.4:
+            logger.info(f"知识库无匹配，提示用户选择是否上网搜索")
+            
+            yield {"type": "info", "message": "知识库未找到相关内容"}
+            yield {
+                "type": "options",
+                "options": [
+                    {"label": "上网搜索", "value": "search", "icon": "🔍"},
+                    {"label": "算了", "value": "done", "icon": "✅"}
+                ]
+            }
+            
+            fallback_prompt = f"""请用你的知识回答以下问题。如果不确定，请说明。
+
+问题：{query}
+
+请用中文回答，简洁明了。"""
+            
+            messages = [{"role": "user", "content": fallback_prompt}]
+            full_response = ""
+            
+            if stream:
+                async for chunk in llm_client.chat_stream(messages):
+                    full_response += chunk
+                    yield {"type": "content", "content": chunk}
+            else:
+                response = await llm_client.chat(messages)
+                full_response = response
+                yield {"type": "content", "content": response}
+            
+            # 保存到历史
+            if session_id:
+                await history_manager.save_message(session_id, "user", query)
+                await history_manager.save_message(session_id, "assistant", full_response)
             return
         
         # 4. 发送找到的文章信息（带可点击链接）
@@ -89,8 +138,8 @@ class KnowledgeAgent:
                 tags = result.metadata.get("tags", [])
                 title = result.metadata.get("title", "")
                 
-                # 生成博客链接
-                blog_url = self._generate_blog_url(source, title)
+                # 生成博客链接（从 metadata 读取 date）
+                blog_url = self._generate_blog_url(source, title, result.metadata)
                 
                 # 提取相对路径
                 relative_path = self._extract_relative_path(source)
@@ -111,6 +160,7 @@ class KnowledgeAgent:
                     "title": title,
                     "score": score,
                     "blog_url": blog_url,
+                    "date": result.metadata.get("date", ""),
                     "preview": result.content[:50] + "..."
                 })
         
@@ -152,42 +202,49 @@ class KnowledgeAgent:
         
         logger.info(f"知识库回答完成: {full_response[:50]}...")
     
-    def _generate_blog_url(self, source: str, title: str) -> str:
+    def _generate_blog_url(self, source: str, title: str, metadata: dict = None) -> str:
         """
         生成博客文章的完整 URL
         
+        Hexo permalink: :year/:month/:day/:title/
+        其中 :title = 文件相对于 _posts/ 的路径（不含 .md 后缀）
+        
+        实际 URL 示例：
+        https://meisijiya.github.io/2025/09/16/2025/博客建设/记录搭建博客流程😗/
+        
         Args:
             source: 文件路径（如 file:///.../2025/博客建设/记录搭建博客流程😗.md）
-            title: 文章标题
+            title: 文章标题（front-matter 中的 title）
+            metadata: chunk 元数据（包含 date、categories 等）
         
         Returns:
-            str: 博客 URL（如 https://meisijiya.github.io/2025/09/16/记录搭建博客流程😗/）
+            str: 博客 URL
         """
         
-        # 提取相对路径
+        # 从 metadata 中读取日期
+        date_str = ""
+        if metadata:
+            date_str = metadata.get("date", "")
+        
+        # 解析日期
+        year, month, day = "2025", "01", "01"
+        if date_str:
+            date_str = str(date_str)
+            if len(date_str) >= 10:
+                parts = date_str[:10].split("-")
+                if len(parts) == 3:
+                    year, month, day = parts[0], parts[1], parts[2]
+        
+        # 提取相对路径（从 _posts 开始，不含 .md）
+        # 这就是 Hexo 的 :title 部分
         relative_path = self._extract_relative_path(source)
         
-        # 尝试从路径中提取日期信息
-        # 路径格式：2025/博客建设/记录搭建博客流程😗
-        parts = relative_path.split("/")
+        # 构建 URL：/{year}/{month}/{day}/{relative_path}/
+        # 需要对路径进行 URL 编码
+        import urllib.parse
+        encoded_path = urllib.parse.quote(relative_path, safe='/')
         
-        if len(parts) >= 1:
-            # 年份
-            year = parts[0] if parts[0].isdigit() else "2025"
-            
-            # 如果有文章标题，使用它
-            if title:
-                # 清理标题，移除特殊字符
-                clean_title = title.replace(" ", "-").replace("😗", "").strip()
-                return f"{BLOG_BASE_URL}/{year}/01/01/{clean_title}/"
-            
-            # 使用路径的最后一部分作为文章名
-            if len(parts) >= 2:
-                article_name = parts[-1]
-                return f"{BLOG_BASE_URL}/{year}/01/01/{article_name}/"
-        
-        # 默认返回博客首页
-        return BLOG_BASE_URL
+        return f"{BLOG_BASE_URL}/{year}/{month}/{day}/{encoded_path}/"
     
     def _extract_relative_path(self, source: str) -> str:
         """
@@ -221,8 +278,8 @@ class KnowledgeAgent:
             relative_path = self._extract_relative_path(source)
             categories = result.metadata.get("categories", [])
             
-            # 生成博客链接
-            blog_url = self._generate_blog_url(source, title)
+            # 生成博客链接（从 metadata 读取 date）
+            blog_url = self._generate_blog_url(source, title, result.metadata)
             
             # 构建来源显示（带链接）
             if categories:

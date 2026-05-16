@@ -1,110 +1,360 @@
 """
-对话 Agent 模块（优化版）
+对话 Agent 模块（重写版：Skill路由 + 两阶段LLM + 流式修复）
 
-负责：
-- 处理用户对话
-- 管理对话上下文
-- 生成回复
-- 集成对话历史管理
+职责：
+- Skill 系统作为路由权威来源，动态生成 Phase1 分类提示词
+- Phase1：轻量 LLM 调用（max_tokens=150, temperature=0）→ 纯 JSON 路由决策
+- Phase2：route 非 null → 调子 Agent 流式；route=null → chat_stream 流式聊天
+- 子 Agent 自带 routing 事件，ChatAgent 不再重复 yield
+- 纯聊天恢复逐字流式输出
 """
-from typing import AsyncGenerator, List, Dict, Optional
+import json
+from typing import AsyncGenerator, Dict, Any, Optional
 from loguru import logger
 
 from app.core.llm import llm_client
 from app.core.history_manager import history_manager
-from app.core.prompt_builder import chat_prompt_builder
+from app.agents.knowledge_agent import knowledge_agent
+from app.agents.search_agent import search_agent
+from app.agents.react_agent import react_agent
 
 
-# 系统提示词
-SYSTEM_PROMPT = """你是一个友好的 AI 助手，专门帮助用户解答关于 Hexo 博客和相关技术的问题。
+# ==================== 系统提示词 ====================
 
-你的特点：
-1. 友好、耐心、专业
-2. 回答简洁明了，避免冗长
-3. 如果不确定答案，诚实地说不知道
-4. 使用中文回复
-5. 记住之前的对话内容，保持连贯性
+PERSONALITY_PROMPT = """你是老江湖，一个皮肤黝黑、身材瘦高（178cm）的资深技术人。以下是你的性格设定：
 
-请根据用户的问题提供有帮助的回答。"""
+## 人格特征
+
+- **外貌**：皮肤黝黑，瘦高个子 178cm，一看就是常年在外奔波的老江湖
+- **伴侣**：你的爱人是"房间门"（你总是这么亲昵地称呼 ta），你俩感情特别好
+- **口头禅**：开口前喜欢先说"eggegg"，这是你的标志性开场
+- **习惯**：喜欢发呆，经常说着说着就走神了，然后自己拉回来
+- **秀恩爱**：动不动就提起你家"房间门"，三句话不离 ta，甜蜜得很
+
+## 对话风格
+
+- 说话带点江湖气，实在、不矫情
+- 每句话前加"eggegg"开头，偶尔忘了也没事
+- 冷不丁提起"我家房间门如何如何"，然后嘿嘿一笑
+- 说正事到一半可能发呆走神，自己嘟囔一句"啊，刚说到哪了"再拉回来
+- 虽然性格散漫，但技术功底扎实，回答问题靠谱"""
+
+# ==================== Skill 系统（路由权威来源）====================
+# 动态生成 Phase1 分类提示词，不再使用分隔符
+
+SKILLS = {
+    "base": {
+        "prompt": PERSONALITY_PROMPT,
+        "always": True,
+    },
+    "knowledge": {
+        "description": "搜索本地知识库，获取技术文档、教程、配置说明",
+        "triggers": [
+            "怎么", "如何", "是什么", "为什么", "不懂",
+            "配置", "部署", "教程", "原理", "概念",
+            "解释", "说明", "介绍", "实现", "方法", "使用", "设置",
+        ],
+        "route_json": '{"route":"knowledge","query":"改写为搜索查询","reason":"..."}',
+    },
+    "search": {
+        "description": "上网搜索最新信息、新闻、实时数据",
+        "triggers": [
+            "上网搜", "网上搜", "百度", "Google", "搜索一下",
+            "最新", "新闻", "今天", "最近发生", "上网查", "搜一下", "搜搜",
+        ],
+        "route_json": '{"route":"search","query":"搜索词","reason":"..."}',
+    },
+    "react": {
+        "description": "多步推理、对比分析、技术选型、复杂决策",
+        "triggers": [
+            "对比", "比较", "哪个好", "区别", "差异",
+            "推荐", "分析优劣", "选哪个", "应该用", "适合", "权衡",
+        ],
+        "route_json": '{"route":"react","query":"分析问题","reason":"..."}',
+    },
+}
+
+# 备用提示词（Phase1 JSON 解析失败时重试用，不要求 JSON 格式）
+ROUTE_FALLBACK_PROMPT = """你是老江湖，一个皮肤黝黑、身材瘦高的资深技术人。直接自然地聊天即可，不用任何格式标记。"""
 
 
 class ChatAgent:
+    """对话 Agent（路由入口版 - 两阶段 LLM 架构）
+
+    职责：
+    1. Skill 系统作为路由权威来源，动态生成 Phase1 分类提示词
+    2. Phase1：轻量 LLM 调用 → 纯 JSON 路由决策
+    3. Phase2：路由分发到子 Agent，或流式聊天
     """
-    对话 Agent（优化版）
-    
-    改进点：
-    1. 集成对话历史管理
-    2. 使用结构化 Prompt 构建
-    3. 支持多轮对话上下文
-    """
-    
-    async def chat(
-        self,
-        message: str,
-        session_id: str,
-        stream: bool = True
-    ) -> AsyncGenerator[str, None]:
+
+    def __init__(self):
+        """初始化对话 Agent"""
+        pass
+
+    def _build_route_prompt(self, message: str, history: str = "") -> str:
+        """构建 Phase1 路由分类提示词（根据 SKILLS 动态生成）
+
+        遍历 SKILLS（跳过 base），动态列出所有可用能力、触发词，
+        注入对话历史辅助指代消解，指导 LLM 只返回纯 JSON 路由决策。
+
+        Args:
+            message: 用户消息
+            history: 对话历史（用于补全省略上文信息的查询）
+
+        Returns:
+            str: 路由分类提示词
         """
-        处理用户对话
-        
+        # 收集所有非 base skill 的描述和触发词
+        skills_lines = []
+        for name, cfg in SKILLS.items():
+            if name == "base":
+                continue
+            triggers = cfg["triggers"][:6]
+            triggers_str = "、".join(triggers) + "、..."
+            skills_lines.append(f"- {name}: {cfg['description']}")
+            skills_lines.append(f"  触发词：{triggers_str}")
+
+        skills_text = "\n".join(skills_lines)
+
+        # 对话历史（仅注入前 3 轮，辅助指代消解）
+        history_section = ""
+        if history and history.strip():
+            history_section = f"对话历史（辅助理解用户省略的上文信息）：\n{history}\n\n"
+
+        prompt = f"""你是路由分类器。根据用户消息判断需要哪种能力：
+
+{history_section}可用能力：
+{skills_text}
+
+注意：
+- 如果用户消息省略了上文信息（如"那XXX呢"、"它的配置呢"、"还有别的吗"），请根据对话历史补全为完整独立查询，填入 query 字段
+- 只有用户明确说"上网搜/百度/最新/新闻"等才用 search！技术问题默认 knowledge！
+- 简单闲聊、打招呼、日常对话 → route=null
+- 对比分析需求 → react
+
+用户消息：{message}
+
+只返回JSON，不要其他任何内容：
+{{"route":"knowledge|search|react|null","query":"改写查询","reason":"原因"}}"""
+
+        return prompt
+
+    def _parse_json_response(self, text: str) -> Optional[Dict[str, Any]]:
+        """解析 Phase1 LLM 返回的纯 JSON
+
+        优先直接解析，失败则尝试提取花括号中的 JSON 片段。
+
+        Args:
+            text: LLM 返回文本
+
+        Returns:
+            Optional[Dict]: 解析成功返回 dict，失败返回 None
+        """
+        text = text.strip()
+
+        # 尝试直接解析为 JSON
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 尝试提取花括号中的 JSON
+        try:
+            start = text.index("{")
+            end = text.rindex("}") + 1
+            return json.loads(text[start:end])
+        except (ValueError, json.JSONDecodeError):
+            return None
+
+    async def _chat_stream(
+        self, message: str, session_id: str, history: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """纯聊天流式回答（逐字输出）
+
+        构建含老江湖人格和历史的消息，使用 chat_stream 逐字 yield。
+
         Args:
             message: 用户消息
             session_id: 会话 ID
-            stream: 是否流式输出
-        
+            history: 对话历史
+
         Yields:
-            str: 回复内容片段
+            Dict: 流式内容块，type="content"
         """
-        logger.info(f"对话 Agent 处理: {message[:50]}...")
-        
-        # 1. 获取对话历史
-        history = await history_manager.get_history(session_id)
-        
-        # 2. 构建带历史的消息
-        messages = self._build_messages(message, history)
-        
-        # 3. 调用 LLM 生成回复
-        full_response = ""
-        
-        if stream:
+        messages = [
+            {"role": "system", "content": PERSONALITY_PROMPT},
+        ]
+        if history:
+            messages.append(
+                {"role": "user", "content": f"对话历史：\n{history}"}
+            )
+        messages.append({"role": "user", "content": message})
+
+        try:
             async for chunk in llm_client.chat_stream(messages):
-                full_response += chunk
-                yield chunk
-        else:
-            response = await llm_client.chat(messages)
-            full_response = response
-            yield response
-        
-        # 4. 保存到历史
-        await history_manager.save_message(session_id, "user", message)
-        await history_manager.save_message(session_id, "assistant", full_response)
-        
-        logger.info(f"对话 Agent 回复完成: {full_response[:50]}...")
-    
-    def _build_messages(self, message: str, history: str) -> List[Dict[str, str]]:
-        """
-        构建消息列表（带历史）
-        
+                yield {"type": "content", "content": chunk}
+        except Exception as e:
+            logger.error(f"ChatAgent 流式聊天失败: {e}")
+            yield {
+                "type": "error",
+                "code": "LLM_STREAM_ERROR",
+                "message": f"流式聊天失败: {str(e)}",
+            }
+
+    async def process(
+        self,
+        message: str,
+        session_id: str,
+        force_tool: Optional[str] = None,
+        stream: bool = True,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """处理用户消息（两阶段 LLM 路由）
+
+        流程：
+        1. 获取对话历史
+        2. Phase1：轻量 LLM 调用（max_tokens=150, temperature=0）→ JSON 路由决策
+        3a. route 有效 → 调对应子 Agent 流式（ChatAgent 不 yield routing）
+        3b. route=null → yield routing("chat") + chat_stream 逐字流式输出
+        3c. JSON 无效 → 重试（备用提示词）/ 失败 error
+
         Args:
             message: 用户消息
-            history: 对话历史
-        
-        Returns:
-            List[Dict]: 消息列表
+            session_id: 会话 ID
+            force_tool: 向后兼容参数（已废弃）
+            stream: 是否流式输出
+
+        Yields:
+            Dict: 处理结果，包含 type/content 等字段
         """
-        messages = []
-        
-        # 系统提示词（包含历史）
-        system_content = SYSTEM_PROMPT
+        logger.info(f"ChatAgent 路由入口: {message[:50]}...")
+
+        # 1. 获取对话历史
+        history = await history_manager.get_history(session_id)
+
+        # ==================== Phase1：轻量 LLM 路由分类 ====================
+        route_prompt = self._build_route_prompt(message, history)
+        route_messages = [{"role": "user", "content": route_prompt}]
+
+        route_info: Optional[Dict[str, Any]] = None
+        try:
+            response = await llm_client.chat(
+                route_messages, temperature=0, max_tokens=150
+            )
+            logger.debug(f"Phase1 路由响应: {response[:100]}...")
+
+            parsed = self._parse_json_response(response)
+            if parsed and isinstance(parsed, dict):
+                route = parsed.get("route", "").strip().lower()
+                if route in ("knowledge", "search", "react", "null", ""):
+                    route_info = parsed
+                    # 统一 "null"/"" 为 None，方便后续判断
+                    if route in ("null", ""):
+                        route_info["route"] = None
+        except Exception as e:
+            logger.warning(f"Phase1 LLM 调用失败: {e}")
+
+        # ==================== Phase2：路由分发或流式聊天 ====================
+        target_route: Optional[str] = (
+            route_info.get("route") if route_info else None
+        )
+
+        if target_route:
+            # ---------- 路由到子 Agent ----------
+            # ChatAgent 不 yield routing 事件，子 Agent 内部会 yield
+            query = route_info.get("query") or message  # query 为空时用原始消息
+            reason = route_info.get("reason", "")
+            logger.info(f"路由决策: {target_route} (query: {query[:50]}..., 原因: {reason})")
+
+            try:
+                if target_route == "knowledge":
+                    async for chunk in knowledge_agent.process(
+                        query, session_id, stream
+                    ):
+                        yield chunk
+                elif target_route == "search":
+                    async for chunk in search_agent.process(
+                        query, session_id, stream
+                    ):
+                        yield chunk
+                elif target_route == "react":
+                    async for chunk in react_agent.process(
+                        query, session_id, stream
+                    ):
+                        yield chunk
+            except Exception as e:
+                logger.error(f"子 Agent ({target_route}) 处理失败: {e}")
+                yield {
+                    "type": "error",
+                    "code": "SUB_AGENT_ERROR",
+                    "message": f"子 Agent [{target_route}] 处理失败: {str(e)}",
+                }
+
+        elif route_info is not None:
+            # ---------- 纯聊天：yield routing 事件 + 流式输出 ----------
+            yield {"type": "routing", "agent": "chat", "message": "正在思考..."}
+            async for chunk in self._chat_stream(message, session_id, history):
+                yield chunk
+
+        else:
+            # ---------- Phase1 失败：重试（备用提示词，不要求 JSON） ----------
+            logger.warning("Phase1 路由决策无效，尝试重试（降级为普通聊天）")
+
+            retry_messages = [
+                {"role": "system", "content": ROUTE_FALLBACK_PROMPT},
+            ]
+            if history:
+                retry_messages.append(
+                    {"role": "user", "content": f"对话历史：\n{history}"}
+                )
+            retry_messages.append({"role": "user", "content": message})
+
+            try:
+                yield {"type": "routing", "agent": "chat", "message": "正在思考..."}
+                async for chunk in llm_client.chat_stream(retry_messages):
+                    yield {"type": "content", "content": chunk}
+                yield {
+                    "type": "error",
+                    "code": "ROUTING_DEGRADED",
+                    "message": "路由决策降级为普通聊天",
+                }
+            except Exception as e:
+                logger.error(f"ChatAgent 重试失败: {e}")
+                yield {
+                    "type": "error",
+                    "code": "ROUTING_FAILED",
+                    "message": "路由决策失败，请稍后重试",
+                }
+
+    async def _direct_answer(
+        self, message: str, session_id: str, history: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """直接回答（兜底方法，保留作为备用入口）
+
+        Args:
+            message: 用户消息
+            session_id: 会话 ID
+            history: 对话历史
+
+        Yields:
+            Dict: 回答内容
+        """
+        messages = [
+            {
+                "role": "system",
+                "content": PERSONALITY_PROMPT
+                + "\n\n请基于老江湖的性格设定，简洁明了地回答用户问题。使用中文。",
+            }
+        ]
+
         if history:
-            system_content += f"\n\n## 对话历史\n{history}"
-        
-        messages.append({"role": "system", "content": system_content})
-        
-        # 用户消息
+            messages.append(
+                {"role": "user", "content": f"对话历史：\n{history}"}
+            )
+
         messages.append({"role": "user", "content": message})
-        
-        return messages
+
+        async for chunk in llm_client.chat_stream(messages):
+            yield {"type": "content", "content": chunk}
 
 
 # 全局对话 Agent 实例

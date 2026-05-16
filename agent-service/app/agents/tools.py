@@ -1,17 +1,21 @@
 """
-工具定义和调用模块
+工具定义和调用模块（重构版 v2）
 
-负责：
+职责：
 - 定义可用工具
 - 工具调用执行
 - 工具结果格式化
-"""
-import json
-from typing import Dict, Any, List, Callable, Optional
-from loguru import logger
 
-from app.knowledge.retriever import retriever
-from app.core.database import async_session_maker
+变更：
+- 移除知识库工具（与 KnowledgeAgent 重复）
+- 添加 WebSearchTool（支持百度/DuckDuckGo）
+- ReAct Agent 使用 web_search 进行网络搜索
+"""
+import os
+import json
+from typing import Dict, Any, List, Optional
+import httpx
+from loguru import logger
 
 
 class Tool:
@@ -27,135 +31,170 @@ class Tool:
         raise NotImplementedError
 
 
-class SearchKnowledgeTool(Tool):
-    """知识库搜索工具"""
+class WebSearchTool(Tool):
+    """网络搜索工具（支持百度/DuckDuckGo）"""
     
     def __init__(self):
         super().__init__(
-            name="search_knowledge",
-            description="搜索知识库中的文档，获取技术文档和教程信息",
+            name="web_search",
+            description="使用搜索引擎进行网络搜索，获取最新信息",
             parameters={
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "搜索查询，例如：Redis 分布式锁、Hexo 安装"
+                        "description": "搜索查询词，例如：2025年最新AI新闻、Python异步编程教程"
                     }
                 },
                 "required": ["query"]
             }
         )
+        # 搜索引擎配置
+        self.search_engine = os.getenv("SEARCH_ENGINE", "baidu")
+        self.baidu_api_key = os.getenv("BAIDU_SEARCH_API_KEY", "")
     
     async def execute(self, query: str = "", **kwargs) -> str:
-        """执行知识库搜索"""
+        """执行网络搜索"""
         if not query:
             return "错误：缺少搜索查询参数"
         
+        # 根据配置选择搜索引擎
+        if self.search_engine == "baidu" and self.baidu_api_key:
+            return await self._search_baidu(query)
+        else:
+            return await self._search_duckduckgo(query)
+    
+    async def _search_baidu(self, query: str) -> Dict[str, Any]:
+        """使用百度千帆搜索 API"""
+        if not self.baidu_api_key:
+            return {"summary": "错误：百度搜索 API Key 未配置", "sources": []}
+        
         try:
-            async with async_session_maker() as db:
-                results = await retriever.search(db, query, top_k=3, dynamic=False)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://qianfan.baidubce.com/v2/ai_search/web_search",
+                    json={
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": query
+                            }
+                        ],
+                        "search_source": "baidu_search_v2",
+                        "resource_type_filter": [
+                            {"type": "web", "top_k": 5}
+                        ],
+                        "search_recency_filter": "year"
+                    },
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.baidu_api_key}"
+                    },
+                    timeout=15.0
+                )
+                
+                if response.status_code != 200:
+                    return {"summary": f"百度搜索失败：HTTP {response.status_code}", "sources": []}
+                
+                data = response.json()
+                references = data.get("references", [])
+                
+                if not references:
+                    return {"summary": f"搜索'{query}'没有找到相关结果", "sources": []}
+                
+                formatted = []
+                sources = []
+                for i, ref in enumerate(references[:5], 1):
+                    title = ref.get("title", "")
+                    url = ref.get("url", "")
+                    content = ref.get("content", "")[:200]
+                    formatted.append(f"[{i}] {title}\n    链接: {url}\n    摘要: {content}...")
+                    sources.append({"title": title, "url": url, "snippet": content})
+                
+                return {"summary": "\n\n".join(formatted), "sources": sources}
+                
+        except Exception as e:
+            logger.error(f"百度搜索失败: {e}")
+            return {"summary": f"百度搜索失败：{str(e)}", "sources": []}
+    
+    async def _search_duckduckgo(self, query: str) -> Dict[str, Any]:
+        """使用 DuckDuckGo 搜索（备用）"""
+        try:
+            from duckduckgo_search import DDGS
+            
+            logger.info(f"执行 DuckDuckGo 搜索: {query}")
+            
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=5))
             
             if not results:
-                return f"知识库中没有找到关于'{query}'的相关文档"
+                return {"summary": f"搜索'{query}'没有找到相关结果", "sources": []}
             
-            # 格式化结果
             formatted = []
+            sources = []
             for i, r in enumerate(results, 1):
-                source = r.metadata.get("_source", "未知来源")
-                formatted.append(f"[{i}] (来源: {source})\n{r.content[:200]}...")
+                title = r.get("title", "")
+                href = r.get("href", "")
+                body = r.get("body", "")
+                formatted.append(f"[{i}] {title}\n    链接: {href}\n    摘要: {body[:200]}...")
+                sources.append({"title": title, "url": href, "snippet": body[:200]})
             
-            return "\n\n".join(formatted)
+            return {"summary": "\n\n".join(formatted), "sources": sources}
             
+        except ImportError:
+            logger.error("duckduckgo_search 未安装")
+            return {"summary": "错误：搜索服务不可用（缺少依赖）", "sources": []}
         except Exception as e:
-            logger.error(f"知识库搜索失败: {e}")
-            return f"知识库搜索失败：{str(e)}"
+            logger.error(f"DuckDuckGo 搜索失败: {e}")
+            return {"summary": f"DuckDuckGo 搜索失败：{str(e)}", "sources": []}
 
 
-class GetArticleTool(Tool):
-    """获取文章工具"""
-    
+class KnowledgeSearchTool(Tool):
+    """知识库搜索工具，检索本地知识库中的技术文档和教程片段"""
+
     def __init__(self):
         super().__init__(
-            name="get_article",
-            description="获取指定文章的详细内容",
+            name="knowledge_search",
+            description="搜索本地知识库，获取技术文档和教程的原文片段",
             parameters={
                 "type": "object",
                 "properties": {
-                    "article_title": {
+                    "query": {
                         "type": "string",
-                        "description": "文章标题或关键词"
+                        "description": "搜索查询词，例如：Hexo部署流程、Markdown语法、插件开发"
                     }
                 },
-                "required": ["article_title"]
+                "required": ["query"]
             }
         )
-    
-    async def execute(self, article_title: str = "", **kwargs) -> str:
-        """获取文章内容"""
-        if not article_title:
-            return "错误：缺少文章标题参数"
-        
-        try:
-            from app.models.knowledge import Article
-            from sqlalchemy import select
-            
-            async with async_session_maker() as db:
-                # 模糊搜索文章
-                result = await db.execute(
-                    select(Article).where(
-                        Article.title.ilike(f"%{article_title}%")
+
+    async def execute(self, query: str = "", **kwargs) -> str:
+        """执行知识库搜索，返回原文片段及其相似度分数"""
+        if not query:
+            return "错误：缺少搜索查询参数"
+
+        from app.core.database import async_session_maker
+        from app.knowledge.retriever import retriever
+
+        async with async_session_maker() as db:
+            try:
+                results = await retriever.search(db, query, top_k=5, dynamic=True)
+
+                if not results:
+                    return f"知识库搜索「{query}」没有找到相关结果"
+
+                formatted = []
+                for i, r in enumerate(results, 1):
+                    formatted.append(
+                        f"[{i}] (相似度: {r.score:.4f})\n"
+                        f"    {r.content.strip()}"
                     )
-                )
-                articles = result.scalars().all()
-                
-                if not articles:
-                    return f"没有找到标题包含'{article_title}'的文章"
-                
-                # 返回第一篇文章
-                article = articles[0]
-                return f"标题：{article.title}\n\n内容：\n{article.content[:1000]}..."
-                
-        except Exception as e:
-            logger.error(f"获取文章失败: {e}")
-            return f"获取文章失败：{str(e)}"
 
+                return "\n\n".join(formatted)
 
-class ListArticlesTool(Tool):
-    """列出文章工具"""
-    
-    def __init__(self):
-        super().__init__(
-            name="list_articles",
-            description="列出知识库中的所有文章标题",
-            parameters={
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        )
-    
-    async def execute(self, **kwargs) -> str:
-        """列出所有文章"""
-        try:
-            from app.models.knowledge import Article
-            from sqlalchemy import select
-            
-            async with async_session_maker() as db:
-                result = await db.execute(
-                    select(Article.title).order_by(Article.created_at.desc())
-                )
-                titles = [row[0] for row in result.fetchall()]
-                
-                if not titles:
-                    return "知识库中暂无文章"
-                
-                # 格式化文章列表
-                formatted = [f"[{i+1}] {title}" for i, title in enumerate(titles[:20])]
-                return f"知识库共有 {len(titles)} 篇文章：\n" + "\n".join(formatted)
-                
-        except Exception as e:
-            logger.error(f"列出文章失败: {e}")
-            return f"列出文章失败：{str(e)}"
+            except Exception as e:
+                logger.error(f"知识库搜索失败: {e}")
+                return f"知识库搜索失败：{str(e)}"
 
 
 class ToolCollection:
@@ -167,9 +206,8 @@ class ToolCollection:
     
     def _register_default_tools(self):
         """注册默认工具"""
-        self.register(SearchKnowledgeTool())
-        self.register(GetArticleTool())
-        self.register(ListArticlesTool())
+        self.register(WebSearchTool())
+        self.register(KnowledgeSearchTool())
     
     def register(self, tool: Tool):
         """注册工具"""

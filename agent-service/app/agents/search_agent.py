@@ -1,13 +1,14 @@
 """
-搜索 Agent 模块（优化版）
+搜索 Agent 模块（优化版 v2）
 
 负责：
-- 调用外部搜索 API
+- 调用外部搜索 API（支持百度/DuckDuckGo）
 - 整理搜索结果
 - 生成回答
 - 集成对话历史管理
 """
-from typing import AsyncGenerator, List, Dict
+import os
+from typing import AsyncGenerator, List, Dict, Any
 import httpx
 from loguru import logger
 
@@ -39,7 +40,35 @@ class SearchAgent:
     
     def __init__(self):
         """初始化搜索 Agent"""
-        self.search_url = "https://api.duckduckgo.com/"
+        # 搜索引擎配置（优先使用百度，DuckDuckGo 作为备用）
+        self.search_engine = os.getenv("SEARCH_ENGINE", "baidu")
+        self.baidu_api_key = os.getenv("BAIDU_SEARCH_API_KEY", "")
+    
+    async def process(
+        self,
+        message: str,
+        session_id: str = None,
+        stream: bool = True
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        处理用户消息（Orchestrator 调用入口）
+        
+        Args:
+            message: 用户消息
+            session_id: 会话 ID
+            stream: 是否流式输出
+            
+        Yields:
+            Dict[str, Any]: 处理结果
+        """
+        yield {"type": "routing", "agent": "search", "message": "正在搜索网络..."}
+        async for chunk in self.search_and_answer(message, session_id, stream):
+            # 如果 chunk 已经是 dict 类型（如 info、search_sources），直接 yield
+            if isinstance(chunk, dict):
+                yield chunk
+            else:
+                # 否则包装成 content 消息
+                yield {"type": "content", "content": chunk}
     
     async def search_and_answer(
         self,
@@ -69,10 +98,43 @@ class SearchAgent:
         search_results = await self._search(query)
         
         if not search_results:
-            yield "抱歉，没有找到相关的搜索结果。"
+            # 搜索失败时，使用 LLM 自身知识回答
+            logger.info(f"搜索无结果，使用 LLM 自身知识回答: {query[:50]}...")
+            fallback_messages = [
+                {"role": "system", "content": "你是一个知识渊博的助手。请用你的知识回答用户的问题。如果不确定，请说明。"},
+                {"role": "user", "content": query}
+            ]
+            fallback_response = ""
+            if stream:
+                async for chunk in llm_client.chat_stream(fallback_messages):
+                    fallback_response += chunk
+                    yield chunk
+            else:
+                fallback_response = await llm_client.chat(fallback_messages)
+                yield fallback_response
+            
+            # 发送提示信息
+            yield {
+                "type": "info",
+                "message": "💡 搜索暂无结果，以上回答基于 AI 自身知识，可能不够准确。"
+            }
             return
         
-        # 3. 构建上下文
+        # 3. 发送搜索来源信息（带链接）
+        sources_info = {
+            "type": "search_sources",
+            "message": f"🔍 找到 {len(search_results)} 条搜索结果",
+            "sources": []
+        }
+        for i, result in enumerate(search_results, 1):
+            sources_info["sources"].append({
+                "index": i,
+                "title": result.get("title", ""),
+                "url": result.get("url", "")
+            })
+        yield sources_info
+        
+        # 4. 构建上下文
         context = self._build_context(search_results)
         
         # 4. 构建消息（带历史）
@@ -106,12 +168,79 @@ class SearchAgent:
     
     async def _search(self, query: str) -> List[Dict[str, str]]:
         """
-        执行搜索
+        执行搜索（支持百度/DuckDuckGo）
+        """
+        # 根据配置选择搜索引擎
+        if self.search_engine == "baidu" and self.baidu_api_key:
+            return await self._search_baidu(query)
+        else:
+            return await self._search_duckduckgo(query)
+    
+    async def _search_baidu(self, query: str) -> List[Dict[str, str]]:
+        """
+        使用百度搜索 API（千帆平台）
+        
+        API 文档：https://cloud.baidu.com/doc/WENXINWORKSHOP/s/Hlkz3p71k
+        """
+        if not self.baidu_api_key:
+            logger.warning("百度搜索 API Key 未配置")
+            return []
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                # 百度千帆搜索 API
+                response = await client.post(
+                    "https://qianfan.baidubce.com/v2/ai_search/web_search",
+                    json={
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": query
+                            }
+                        ],
+                        "search_source": "baidu_search_v2",
+                        "resource_type_filter": [
+                            {"type": "web", "top_k": 5}
+                        ],
+                        "search_recency_filter": "year"
+                    },
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.baidu_api_key}"
+                    },
+                    timeout=15.0
+                )
+                
+                if response.status_code != 200:
+                    logger.error(f"百度搜索 API 调用失败: {response.status_code} - {response.text}")
+                    return []
+                
+                data = response.json()
+                results = []
+                
+                # 解析百度搜索结果
+                for ref in data.get("references", [])[:5]:
+                    results.append({
+                        "title": ref.get("title", ""),
+                        "content": ref.get("content", "")[:500],  # 限制内容长度
+                        "url": ref.get("url", "")
+                    })
+                
+                logger.info(f"百度搜索完成: '{query[:30]}...', 找到 {len(results)} 条结果")
+                return results
+                
+            except Exception as e:
+                logger.error(f"百度搜索失败: {e}")
+                return []
+    
+    async def _search_duckduckgo(self, query: str) -> List[Dict[str, str]]:
+        """
+        使用 DuckDuckGo 搜索（备用）
         """
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(
-                    self.search_url,
+                    "https://api.duckduckgo.com/",
                     params={
                         "q": query,
                         "format": "json",
@@ -122,7 +251,7 @@ class SearchAgent:
                 )
                 
                 if response.status_code != 200:
-                    logger.error(f"搜索 API 调用失败: {response.status_code}")
+                    logger.error(f"DuckDuckGo 搜索 API 调用失败: {response.status_code}")
                     return []
                 
                 data = response.json()
@@ -143,22 +272,24 @@ class SearchAgent:
                             "url": topic.get("FirstURL", "")
                         })
                 
-                logger.info(f"搜索完成: '{query[:30]}...', 找到 {len(results)} 条结果")
+                logger.info(f"DuckDuckGo 搜索完成: '{query[:30]}...', 找到 {len(results)} 条结果")
                 return results
                 
             except Exception as e:
-                logger.error(f"搜索失败: {e}")
+                logger.error(f"DuckDuckGo 搜索失败: {e}")
                 return []
     
     def _build_context(self, results: List[Dict[str, str]]) -> str:
         """
-        构建搜索上下文
+        构建搜索上下文（带标题和链接）
         """
         context_parts = []
         
         for i, result in enumerate(results, 1):
+            title = result.get("title", "未知标题")
             url = result.get("url", "")
-            context_parts.append(f"[搜索结果 {i}] (来源: {url})\n{result['content']}")
+            content = result.get("content", "")[:300]  # 限制内容长度
+            context_parts.append(f"[{i}] {title}\n链接: {url}\n摘要: {content}")
         
         return "\n\n".join(context_parts)
 
