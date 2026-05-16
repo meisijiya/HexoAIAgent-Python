@@ -143,6 +143,8 @@
         const response = await apiRequest('/api/auth/anonymous', { method: 'POST' });
         const data = await response.json();
         state.token = data.token;
+        state.isAnonymous = true;
+        state.dailyRemaining = 10;
         saveState();
         return data;
     }
@@ -465,17 +467,42 @@
     }
 
     function updateUserInfo() {
-        const userInfoEl = $('#userInfo');
+        var userInfoEl = $('#userInfo');
         if (!userInfoEl) return;
-        if (state.user && state.token) {
-            var avatar = state.user.avatar_url
+        var hasToken = !!state.token;
+        var isGithubUser = state.user && state.user.nickname;
+        
+        if (!hasToken) {
+            userInfoEl.innerHTML = '';
+            return;
+        }
+        
+        var html = '<div class="hexo-agent-user-info">';
+        if (isGithubUser) {
+            // GitHub 用户 — 头像 + 昵称
+            html += state.user.avatar_url
                 ? '<img src="' + state.user.avatar_url + '" class="hexo-agent-user-avatar">'
                 : '<div class="hexo-agent-user-avatar-default"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg></div>';
-            userInfoEl.innerHTML = '<div class="hexo-agent-user-info">' + avatar + '<span class="hexo-agent-user-name">' + escapeHtml(state.user.nickname || '') + '</span><button class="hexo-agent-clear-btn" id="btnClear" title="清除会话">🗑️</button><button class="hexo-agent-logout-btn" id="btnLogout" title="退出登录">&times;</button></div>';
-            $('#btnClear').addEventListener('click', clearSession);
-            $('#btnLogout').addEventListener('click', handleLogout);
+            html += '<span class="hexo-agent-user-name">' + escapeHtml(state.user.nickname) + '</span>';
+            html += '<button class="hexo-agent-clear-btn" id="btnClear" title="清除会话">🗑️</button>';
+            html += '<button class="hexo-agent-logout-btn" id="btnLogout" title="退出登录">&times;</button>';
         } else {
-            userInfoEl.innerHTML = '';
+            // 匿名用户 — 显示"游客"
+            html += '<span class="hexo-agent-user-name" style="opacity:0.6">👤 游客</span>';
+            html += '<button class="hexo-agent-clear-btn" id="btnClear" title="清除对话">🗑️</button>';
+            html += '<a class="hexo-agent-login-link" id="btnLogin" title="GitHub 登录解锁全部功能" style="cursor:pointer;font-size:12px;margin-left:8px">🔑 登录</a>';
+        }
+        html += '</div>';
+        userInfoEl.innerHTML = html;
+        
+        var btnClear = $('#btnClear');
+        if (btnClear) btnClear.addEventListener('click', clearSession);
+        if (isGithubUser) {
+            var btnLogout = $('#btnLogout');
+            if (btnLogout) btnLogout.addEventListener('click', handleLogout);
+        } else {
+            var btnLogin = $('#btnLogin');
+            if (btnLogin) btnLogin.addEventListener('click', handleGithubLogin);
         }
     }
 
@@ -484,6 +511,8 @@
         state.user = null;
         state.sessionId = null;
         state.messages = [];
+        state.isAnonymous = true;
+        state.dailyRemaining = 10;
         saveState();
         updateUI();
         addMessage('system', '已退出登录');

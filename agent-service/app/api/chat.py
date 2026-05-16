@@ -19,6 +19,7 @@ from app.agents.chat_agent import chat_agent
 from app.models.session import Session
 from app.models.message import Message
 from app.models.memory import ConversationMemory
+from app.models.user import User
 from app.auth.token import verify_token
 
 router = APIRouter(prefix="/api/chat", tags=["对话"])
@@ -122,10 +123,15 @@ async def chat(chat_req: ChatRequest, fastapi_request: Request, db: AsyncSession
         user_id = verify_token(chat_req.token)
     
     if user_id:
-        # GitHub 登录用户
-        is_anonymous = False
+        # 查库确认是否为匿名用户（匿名登录也会发 JWT）
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user and user.is_anonymous:
+            is_anonymous = True
+            client_ip = fastapi_request.client.host if fastapi_request.client else "unknown"
+        else:
+            is_anonymous = False
     else:
-        # 匿名用户：提取 IP
         is_anonymous = True
         client_ip = fastapi_request.client.host if fastapi_request.client else "unknown"
     
