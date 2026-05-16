@@ -47,7 +47,8 @@ class SearchAgent:
         self,
         message: str,
         session_id: str = None,
-        stream: bool = True
+        stream: bool = True,
+        db=None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         处理用户消息（Orchestrator 调用入口）
@@ -56,12 +57,13 @@ class SearchAgent:
             message: 用户消息
             session_id: 会话 ID
             stream: 是否流式输出
+            db: 数据库会话（用于语义记忆检索）
             
         Yields:
             Dict[str, Any]: 处理结果
         """
         yield {"type": "routing", "agent": "search", "message": "正在搜索网络..."}
-        async for chunk in self.search_and_answer(message, session_id, stream):
+        async for chunk in self.search_and_answer(message, session_id, stream, db=db):
             # 如果 chunk 已经是 dict 类型（如 info、search_sources），直接 yield
             if isinstance(chunk, dict):
                 yield chunk
@@ -73,7 +75,8 @@ class SearchAgent:
         self,
         query: str,
         session_id: str = None,
-        stream: bool = True
+        stream: bool = True,
+        db=None,
     ) -> AsyncGenerator[str, None]:
         """
         搜索并生成回答
@@ -82,16 +85,17 @@ class SearchAgent:
             query: 用户查询
             session_id: 会话 ID（用于获取历史）
             stream: 是否流式输出
+            db: 数据库会话（用于语义记忆检索）
         
         Yields:
             str: 回复内容片段
         """
         logger.info(f"搜索查询: {query[:50]}...")
         
-        # 1. 获取对话历史
+        # 1. 获取对话历史（传递 db 用于语义记忆检索）
         history = ""
         if session_id:
-            history = await history_manager.get_history(session_id)
+            history = await history_manager.get_history(session_id, query=query, db=db)
         
         # 2. 执行搜索
         search_results = await self._search(query)

@@ -215,6 +215,7 @@ class ChatAgent:
         session_id: str,
         force_tool: Optional[str] = None,
         stream: bool = True,
+        db=None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """处理用户消息（两阶段 LLM 路由）
 
@@ -230,14 +231,19 @@ class ChatAgent:
             session_id: 会话 ID
             force_tool: 向后兼容参数（已废弃）
             stream: 是否流式输出
+            db: 数据库会话（传递给子 Agent 用于语义记忆检索）
 
         Yields:
             Dict: 处理结果，包含 type/content 等字段
         """
         logger.info(f"ChatAgent 路由入口: {message[:50]}...")
 
-        # 1. 获取对话历史
-        history = await history_manager.get_history(session_id)
+        # 1. 获取对话历史（传递 db 用于语义记忆检索）
+        history = await history_manager.get_history(
+            session_id,
+            query=message,
+            db=db
+        )
 
         # ==================== Phase1：轻量 LLM 路由分类 ====================
         route_prompt = self._build_route_prompt(message, history)
@@ -276,17 +282,17 @@ class ChatAgent:
             try:
                 if target_route == "knowledge":
                     async for chunk in knowledge_agent.process(
-                        query, session_id, stream
+                        query, session_id, stream, db=db
                     ):
                         yield chunk
                 elif target_route == "search":
                     async for chunk in search_agent.process(
-                        query, session_id, stream
+                        query, session_id, stream, db=db
                     ):
                         yield chunk
                 elif target_route == "react":
                     async for chunk in react_agent.process(
-                        query, session_id, stream
+                        query, session_id, stream, db=db
                     ):
                         yield chunk
             except Exception as e:

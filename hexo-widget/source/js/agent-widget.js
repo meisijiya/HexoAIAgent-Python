@@ -62,9 +62,22 @@
             el.innerHTML = (msg.role === 'assistant' && !msg.className) ? renderMarkdown(msg.content) : msg.content;
             messagesEl.appendChild(el);
         });
-        setTimeout(function() {
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-        }, 100);
+        // 延迟滚动确保 DOM 渲染完成
+        scrollToBottom();
+        setTimeout(function() { scrollToBottom(); }, 300);
+    }
+
+    /** 滚动消息容器到底部 */
+    function scrollToBottom() {
+        var el = $('#agentMessages');
+        if (el) { el.scrollTop = el.scrollHeight; }
+    }
+
+    /** 检查是否已滚动到底部（误差 50px 内） */
+    function isScrolledToBottom() {
+        var el = $('#agentMessages');
+        if (!el) return true;
+        return el.scrollHeight - el.scrollTop - el.clientHeight < 50;
     }
 
     // ==================== Markdown ====================
@@ -186,6 +199,9 @@
                     </button>
                     <button class="hexo-agent-login-btn anonymous" id="btnAnonymous">匿名体验</button>
                 </div>
+                <div class="hexo-agent-scroll-down-wrap" id="agentScrollDownWrap" style="display:none;">
+                    <div class="hexo-agent-scroll-down" id="agentScrollDown" title="回到底部">↓</div>
+                </div>
                 <div class="hexo-agent-input-area" id="agentInputArea" style="display:none;">
                     <textarea class="hexo-agent-input" id="agentInput" placeholder="输入消息..." rows="1" disabled></textarea>
                     <button class="hexo-agent-send-btn" id="agentSend" disabled>
@@ -255,7 +271,7 @@
         el.style.cssText = 'background:#fff3cd;color:#856404;border:1px solid #ffc107;font-size:12px;padding:8px 12px;margin:4px 0;border-radius:6px;';
         el.textContent = message;
         $('#agentMessages').appendChild(el);
-        $('#agentMessages').scrollTop = $('#agentMessages').scrollHeight;
+        scrollToBottom();
     }
 
     function addSources(articles) {
@@ -587,11 +603,24 @@
                             } else if (eventType === 'search_sources') {
                                 addSearchSources(data);
                             } else if (eventType === 'react_thought') {
-                                // 思考链流式显示
+                                // 思考链流式显示（支持展开/收起）
                                 if (!state.reactThinkingEl) {
                                     state.reactThinkingEl = document.createElement('div');
                                     state.reactThinkingEl.className = 'react-thinking-bubble';
-                                    state.reactThinkingEl.innerHTML = '<div class="react-thinking-header">✨ "老江湖" 深度分析中...</div><div class="react-thinking-content"></div>';
+                                    state.reactThinkingEl.innerHTML = '<div class="react-thinking-header"><span class="react-thinking-toggle">▼</span><span>✨ "老江湖" 深度分析中...</span></div><div class="react-thinking-content"></div>';
+                                    // 点击 header 切换展开/收起
+                                    var headerEl = state.reactThinkingEl.querySelector('.react-thinking-header');
+                                    headerEl.addEventListener('click', function() {
+                                        var bubble = this.parentElement;
+                                        var toggle = this.querySelector('.react-thinking-toggle');
+                                        if (bubble.classList.contains('react-thinking-collapsed')) {
+                                            bubble.classList.remove('react-thinking-collapsed');
+                                            toggle.textContent = '▼';
+                                        } else {
+                                            bubble.classList.add('react-thinking-collapsed');
+                                            toggle.textContent = '▶';
+                                        }
+                                    });
                                     $('#agentMessages').appendChild(state.reactThinkingEl);
                                     state.reactThinkingContent = '';
                                 }
@@ -600,7 +629,7 @@
                                 if (contentEl) {
                                     contentEl.textContent = state.reactThinkingContent;
                                 }
-                                $('#agentMessages').scrollTop = $('#agentMessages').scrollHeight;
+                                scrollToBottom();
                             } else if (eventType === 'react_action') {
                                 showTyping();
                             } else if (eventType === 'react_search_results') {
@@ -612,52 +641,41 @@
                                     obsDiv.className = 'react-observation';
                                     obsDiv.textContent = (data.content || '').substring(0, 200);
                                     state.reactThinkingEl.appendChild(obsDiv);
-                                    $('#agentMessages').scrollTop = $('#agentMessages').scrollHeight;
+                                    scrollToBottom();
                                 }
                             } else if (eventType === 'react_formatted') {
-                                // 清除思考链状态
+                                // 清除思考链状态，工具调用信息合并到主消息气泡中
                                 state.reactThinkingEl = null;
                                 state.reactThinkingContent = '';
                                 hideTyping();
 
-                                let finalHtml = '';
+                                // 构建工具调用 HTML，追加到 messageEl 底部
                                 if (data.tools && data.tools.length > 0) {
-                                    finalHtml += '<div class="react-tool-group">';
+                                    var toolsHtml = '<div class="react-tool-group">';
                                     data.tools.forEach(function(tool) {
-                                        finalHtml += '<div class="react-tool-action">🔍 调用工具: ' + escapeHtml(tool.action) + '</div>';
+                                        toolsHtml += '<div class="react-tool-action">🔍 调用工具: ' + escapeHtml(tool.action) + '</div>';
                                         if (tool.sources && tool.sources.length > 0) {
-                                            finalHtml += '<div class="react-tool-sources">';
-                                            finalHtml += '<div class="sources-header">🔍 找到 ' + tool.sources.length + ' 条搜索结果</div>';
-                                            finalHtml += '<ul class="hexo-agent-sources-list">';
+                                            toolsHtml += '<div class="react-tool-sources">';
+                                            toolsHtml += '<div class="sources-header">🔍 找到 ' + tool.sources.length + ' 条搜索结果</div>';
+                                            toolsHtml += '<ul class="hexo-agent-sources-list">';
                                             tool.sources.forEach(function(source) {
                                                 var title = source.title || '未知来源';
                                                 var url = source.url || '';
                                                 if (url) {
-                                                    finalHtml += '<li><a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(title) + '</a></li>';
+                                                    toolsHtml += '<li><a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(title) + '</a></li>';
                                                 } else {
-                                                    finalHtml += '<li>' + escapeHtml(title) + '</li>';
+                                                    toolsHtml += '<li>' + escapeHtml(title) + '</li>';
                                                 }
                                             });
-                                            finalHtml += '</ul></div>';
+                                            toolsHtml += '</ul></div>';
                                         }
                                     });
-                                    finalHtml += '</div>';
+                                    toolsHtml += '</div>';
+                                    if (messageEl) {
+                                        messageEl.innerHTML = renderReactStream(assistantMessage) + toolsHtml;
+                                    }
                                 }
-                                if (data.thought) {
-                                    finalHtml += '<div class="react-thought">' + renderMarkdown(data.thought) + '</div>';
-                                }
-
-                                var formattedEl = document.createElement('div');
-                                formattedEl.className = 'hexo-agent-message assistant';
-                                formattedEl.innerHTML = finalHtml;
-                                if (messageEl && messageEl.parentNode) {
-                                    messageEl.parentNode.insertBefore(formattedEl, messageEl);
-                                } else {
-                                    $('#agentMessages').appendChild(formattedEl);
-                                }
-                                $('#agentMessages').scrollTop = $('#agentMessages').scrollHeight;
-                                state.messages.push({ role: 'assistant', content: data.answer, className: 'react-formatted' });
-                                saveState();
+                                scrollToBottom();
                             } else if (eventType === 'done') {
                                 state.sessionId = data.session_id;
                                 saveState();
@@ -672,7 +690,7 @@
                             }
                             assistantMessage += data.content;
                             messageEl.innerHTML = renderReactStream(assistantMessage);
-                            $('#agentMessages').scrollTop = $('#agentMessages').scrollHeight;
+                            scrollToBottom();
                         }
                     } catch (e) {}
                 }
@@ -746,6 +764,25 @@
             e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
             updateSendButton();
         });
+        // 消息区滚动检测：向上查看时显示回底部按钮
+        $('#agentMessages').addEventListener('scroll', function() {
+            var wrap = $('#agentScrollDownWrap');
+            var btn = $('#agentScrollDown');
+            if (wrap && btn) {
+                if (isScrolledToBottom()) {
+                    wrap.style.display = 'none';
+                    btn.style.display = 'none';
+                } else {
+                    wrap.style.display = 'block';
+                    btn.style.display = 'flex';
+                }
+            }
+        });
+        // 回到底部按钮点击
+        $('#agentScrollDown').addEventListener('click', function() {
+            var el = $('#agentMessages');
+            el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        });
         window.addEventListener('resize', checkBounds);
         if (window.matchMedia) {
             window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateTheme);
@@ -772,6 +809,8 @@
         if (state.isOpen) {
             $('#agentInput').focus();
             checkBounds();
+            // 打开面板时滚动到底部（延迟确保容器可见后生效）
+            setTimeout(function() { scrollToBottom(); }, 100);
         }
     }
 

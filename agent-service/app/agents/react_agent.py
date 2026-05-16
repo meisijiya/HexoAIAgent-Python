@@ -49,7 +49,8 @@ class ReActAgent:
         self,
         query: str,
         session_id: str = None,
-        stream: bool = True
+        stream: bool = True,
+        db=None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         处理用户查询（Function Calling 驱动）
@@ -58,6 +59,7 @@ class ReActAgent:
             query: 用户查询
             session_id: 会话 ID
             stream: 是否流式输出
+            db: 数据库会话（用于语义记忆检索）
 
         Yields:
             Dict: 包含思考过程、工具调用和最终答案的事件
@@ -67,10 +69,10 @@ class ReActAgent:
 
         logger.info(f"ReAct Agent (v3) 开始处理: {query[:50]}...")
 
-        # 1. 获取对话历史
+        # 1. 获取对话历史（传递 db 用于语义记忆检索）
         history = ""
         if session_id:
-            history = await history_manager.get_history(session_id)
+            history = await history_manager.get_history(session_id, query=query, db=db)
 
         history_section = ""
         if history:

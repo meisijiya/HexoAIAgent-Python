@@ -98,7 +98,8 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         async for msg in chat_agent.process(
             request.message,
             session_id,
-            force_tool=request.command if request.command else None
+            force_tool=request.command if request.command else None,
+            db=db
         ):
             msg_type = msg.get("type", "content")
             
