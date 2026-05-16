@@ -7,7 +7,7 @@
     const CONFIG = {
         API_BASE: 'http://localhost:8001',
         STORAGE_KEY: 'hexo-agent-widget',
-        MAX_MESSAGES: 100,
+        MAX_MESSAGES: 20,   // 对齐后端 HISTORY_LIMIT(5轮) × 4(含source/system消息)
         AVATAR_URL: '/images/bubu.jpeg'
     };
 
@@ -31,7 +31,8 @@
                 token: state.token,
                 sessionId: state.sessionId,
                 position: state.position,
-                user: state.user
+                user: state.user,
+                messages: state.messages.slice(-CONFIG.MAX_MESSAGES)
             }));
         } catch (e) {}
     }
@@ -45,8 +46,25 @@
                 state.sessionId = data.sessionId || null;
                 state.position = data.position || { x: null, y: null };
                 state.user = data.user || null;
+                state.messages = data.messages || [];
             }
         } catch (e) {}
+    }
+
+    function restoreMessages() {
+        if (!state.messages.length) return;
+        const messagesEl = $('#agentMessages');
+        state.messages.forEach(function(msg) {
+            const el = document.createElement('div');
+            let cls = 'hexo-agent-message ' + msg.role;
+            if (msg.className) cls += ' ' + msg.className;
+            el.className = cls;
+            el.innerHTML = (msg.role === 'assistant' && !msg.className) ? renderMarkdown(msg.content) : msg.content;
+            messagesEl.appendChild(el);
+        });
+        setTimeout(function() {
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }, 100);
     }
 
     // ==================== Markdown ====================
@@ -208,6 +226,7 @@
         messagesEl.appendChild(messageEl);
         messagesEl.scrollTop = messagesEl.scrollHeight;
         state.messages.push({ role, content, ...extra });
+        saveState();
     }
 
     /** 添加特殊样式消息（ReAct 思考/动作/观察/回答） */
@@ -403,6 +422,7 @@
         state.token = null;
         state.user = null;
         state.sessionId = null;
+        state.messages = [];
         saveState();
         updateUI();
         addMessage('system', '已退出登录');
@@ -523,20 +543,26 @@
         const decoder = new TextDecoder();
         let assistantMessage = '';
         let messageEl = null;
+        let buffer = '';
+        let pendingEvent = null;
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const text = decoder.decode(value);
-            const lines = text.split('\n');
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
 
             for (const line of lines) {
+                if (!line) continue;
                 if (line.startsWith('event: ')) {
-                    const eventType = line.slice(7).trim();
-                    const nextLine = lines[lines.indexOf(line) + 1];
-                    if (nextLine && nextLine.startsWith('data: ')) {
-                        try {
-                            const data = JSON.parse(nextLine.slice(6));
+                    pendingEvent = line.slice(7).trim();
+                } else if (line.startsWith('data: ')) {
+                    const eventType = pendingEvent;
+                    pendingEvent = null;
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        if (eventType) {
                             if (eventType === 'routing') {
                                 hideTyping();
                                 addAgentInfo(data.agent || data.agent_name || 'AI', data.message);
@@ -550,13 +576,12 @@
                             } else if (eventType === 'search_sources') {
                                 addSearchSources(data);
                             } else if (eventType === 'react_action') {
-                                // 工具调用信息由 react_formatted.tools 统一渲染
                                 showTyping();
                             } else if (eventType === 'react_search_results') {
                                 // 搜索结果由 react_formatted.tools 统一渲染
                             } else if (eventType === 'react_formatted') {
                                 hideTyping();
-                                // 构建格式化回答的 HTML（工具调用 + 搜索来源 + 思考链 + 最终答案）
+
                                 let finalHtml = '';
                                 if (data.tools && data.tools.length > 0) {
                                     finalHtml += '<div class="react-tool-group">';
@@ -580,31 +605,27 @@
                                     });
                                     finalHtml += '</div>';
                                 }
-                                // 渲染思考链
                                 if (data.thought) {
                                     finalHtml += '<div class="react-thought">' + renderMarkdown(data.thought) + '</div>';
                                 }
-                                // 渲染最终回答
-                                if (data.answer) {
-                                    finalHtml += '<div class="react-answer-content">' + renderMarkdown(data.answer) + '</div>';
-                                }
-                                // 创建新的独立消息气泡（保留上方的流式过程气泡不被覆盖）
+
                                 var formattedEl = document.createElement('div');
                                 formattedEl.className = 'hexo-agent-message assistant';
                                 formattedEl.innerHTML = finalHtml;
-                                $('#agentMessages').appendChild(formattedEl);
+                                if (messageEl && messageEl.parentNode) {
+                                    messageEl.parentNode.insertBefore(formattedEl, messageEl);
+                                } else {
+                                    $('#agentMessages').appendChild(formattedEl);
+                                }
                                 $('#agentMessages').scrollTop = $('#agentMessages').scrollHeight;
+                                state.messages.push({ role: 'assistant', content: data.answer, className: 'react-formatted' });
+                                saveState();
                             } else if (eventType === 'done') {
                                 state.sessionId = data.session_id;
                                 saveState();
                                 hideAgentStatus();
                             }
-                        } catch (e) {}
-                    }
-                } else if (line.startsWith('data: ')) {
-                    try {
-                        const data = JSON.parse(line.slice(6));
-                        if (data.content) {
+                        } else if (data.content) {
                             if (!messageEl) {
                                 hideTyping();
                                 messageEl = document.createElement('div');
@@ -618,6 +639,11 @@
                     } catch (e) {}
                 }
             }
+        }
+        // 流式结束后保存 assistant 回复到 state
+        if (assistantMessage) {
+            state.messages.push({ role: 'assistant', content: assistantMessage });
+            saveState();
         }
     }
 
@@ -715,6 +741,7 @@
     function init() {
         loadState();
         createWidget();
+        restoreMessages();
         restorePosition();
         bindEvents();
         initDrag();

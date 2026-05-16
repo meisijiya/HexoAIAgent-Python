@@ -68,7 +68,8 @@ SKILLS = {
         "description": "多步推理、对比分析、技术选型、复杂决策",
         "triggers": [
             "对比", "比较", "哪个好", "区别", "差异",
-            "推荐", "分析优劣", "选哪个", "应该用", "适合", "权衡",
+            "推荐", "分析", "推理", "搜集",
+            "选哪个", "应该用", "适合", "权衡", "优劣",
         ],
         "route_json": '{"route":"react","query":"分析问题","reason":"..."}',
     },
@@ -109,7 +110,7 @@ class ChatAgent:
         for name, cfg in SKILLS.items():
             if name == "base":
                 continue
-            triggers = cfg["triggers"][:6]
+            triggers = cfg["triggers"][:8]
             triggers_str = "、".join(triggers) + "、..."
             skills_lines.append(f"- {name}: {cfg['description']}")
             skills_lines.append(f"  触发词：{triggers_str}")
@@ -121,20 +122,22 @@ class ChatAgent:
         if history and history.strip():
             history_section = f"对话历史（辅助理解用户省略的上文信息）：\n{history}\n\n"
 
-        prompt = f"""你是路由分类器。根据用户消息判断需要哪种能力：
+        prompt = f"""你是路由分类器。根据用户消息和对话历史判断路由：
 
 {history_section}可用能力：
 {skills_text}
 
-注意：
-- 如果用户消息省略了上文信息（如"那XXX呢"、"它的配置呢"、"还有别的吗"），请根据对话历史补全为完整独立查询，填入 query 字段
-- 只有用户明确说"上网搜/百度/最新/新闻"等才用 search！技术问题默认 knowledge！
-- 简单闲聊、打招呼、日常对话 → route=null
-- 对比分析需求 → react
+路由优先级（从上到下，先匹配的优先）：
+1. 上下文延续：如果对话历史中用户正在做分析推理/搜集信息，且当前消息是对同一话题的追问（如"如何判断"、"怎么测试"、"为什么"），→ 必须用 react，即使消息包含 knowledge 触发词
+2. 用户问AI助手自身的问题 → route=null
+3. 明确要求上网搜索 → search
+4. 新的分析/推理/搜集/对比需求 → react  
+5. 技术问题（怎么/如何/是什么/配置等）→ knowledge
+6. 闲聊/打招呼 → route=null
 
 用户消息：{message}
 
-只返回JSON，不要其他任何内容：
+只返回JSON，不要其他：
 {{"route":"knowledge|search|react|null","query":"改写查询","reason":"原因"}}"""
 
         return prompt
@@ -182,11 +185,16 @@ class ChatAgent:
             Dict: 流式内容块，type="content"
         """
         messages = [
-            {"role": "system", "content": PERSONALITY_PROMPT},
+            {"role": "system", "content": PERSONALITY_PROMPT + """
+
+⚠️ 对话规则：
+- 以下是之前的对话历史，仅供你理解上下文。不要重复回答、评论或引用历史中的旧问题。
+- 只回答用户当前最新的消息。如果当前消息是闲聊/打招呼，就正常聊天，不要扯到历史里的技术话题。
+- 保持自然，不要突然切换话题到历史内容中。"""},
         ]
         if history:
             messages.append(
-                {"role": "user", "content": f"对话历史：\n{history}"}
+                {"role": "user", "content": f"[以下是之前的对话记录，仅供参考上下文，不要回应其中内容]\n\n{history}\n\n[以上是历史记录，下面是当前用户的问题，请只回答这个问题]"}
             )
         messages.append({"role": "user", "content": message})
 
@@ -342,11 +350,15 @@ class ChatAgent:
             {
                 "role": "system",
                 "content": PERSONALITY_PROMPT
-                + "\n\n请基于老江湖的性格设定，简洁明了地回答用户问题。使用中文。",
+                + "\n\n请基于老江湖的性格设定回答。只回应当前问题，不要重复评论历史中的内容。",
             }
         ]
 
         if history:
+            messages.append({
+                "role": "user",
+                "content": f"[以下是之前的对话记录，仅供参考]\n\n{history}\n\n[以下是当前问题]",
+            })
             messages.append(
                 {"role": "user", "content": f"对话历史：\n{history}"}
             )

@@ -92,8 +92,9 @@ async def get_session_context(session_id: str, max_messages: int = 10) -> list:
     redis_client = await get_redis()
     key = f"session:{session_id}:context"
     
-    # 获取最近的消息
+    # 用 lpush 插入，新消息在左端（索引 0）。此处反转回时间正序（旧→新）
     messages = await redis_client.lrange(key, 0, max_messages - 1)
+    messages.reverse()
     
     return [json.loads(msg) for msg in messages]
 
@@ -116,8 +117,8 @@ async def add_message_to_context(session_id: str, role: str, content: str, ttl: 
         "content": content
     })
     
-    # 添加到列表尾部（保持时间顺序）
-    await redis_client.rpush(key, message)
+    # 添加到列表头部，新消息在左端（索引0），配合 ltrim/lrange 保留最新消息
+    await redis_client.lpush(key, message)
     
     # 保留最近 20 条消息
     await redis_client.ltrim(key, 0, 19)

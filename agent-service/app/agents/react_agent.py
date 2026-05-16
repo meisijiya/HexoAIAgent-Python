@@ -150,10 +150,11 @@ class ReActAgent:
             if final_answer:
                 logger.info(f"ReAct Agent 完成，迭代次数: {iteration + 1}，搜索次数: {search_count}")
                 full_response = final_answer
+                for i in range(0, len(final_answer), 6):
+                    yield {"type": "content", "content": final_answer[i:i+6]}
                 yield {
                     "type": "react_formatted",
                     "thought": "\n\n".join(all_thoughts),
-                    "answer": final_answer,
                     "tools": tool_events
                 }
                 break

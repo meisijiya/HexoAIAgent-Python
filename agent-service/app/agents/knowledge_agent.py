@@ -87,7 +87,7 @@ class KnowledgeAgent:
         
         # 3. 知识库无匹配或相似度过低 → 提示用户 + fallback 到 LLM 自身知识
         max_score = max((r.score for r in search_results), default=0)
-        if not search_results or max_score < 0.4:
+        if not search_results or max_score < 0.6:
             logger.info(f"知识库无匹配，提示用户选择是否上网搜索")
             
             yield {"type": "info", "message": "知识库未找到相关内容"}
