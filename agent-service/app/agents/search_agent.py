@@ -2,7 +2,7 @@
 搜索 Agent 模块（优化版 v2）
 
 负责：
-- 调用外部搜索 API（支持百度/DuckDuckGo）
+- 调用百度千帆搜索 API
 - 整理搜索结果
 - 生成回答
 - 集成对话历史管理
@@ -40,9 +40,8 @@ class SearchAgent:
     
     def __init__(self):
         """初始化搜索 Agent"""
-        # 搜索引擎配置（优先使用百度，DuckDuckGo 作为备用）
-        self.search_engine = os.getenv("SEARCH_ENGINE", "baidu")
         self.baidu_api_key = os.getenv("BAIDU_SEARCH_API_KEY", "")
+        self._search_error = ""  # 搜索错误类型标记
     
     async def process(
         self,
@@ -113,11 +112,18 @@ class SearchAgent:
                 fallback_response = await llm_client.chat(fallback_messages)
                 yield fallback_response
             
-            # 发送提示信息
-            yield {
-                "type": "info",
-                "message": "💡 搜索暂无结果，以上回答基于 AI 自身知识，可能不够准确。"
-            }
+            # 友好提示
+            if getattr(self, '_search_error', '') == 'quota_exceeded':
+                yield {
+                    "type": "info",
+                    "message": "⚠️ 百度搜索每日免费额度（100次/天）已用完，以上回答基于 AI 自身知识。"
+                }
+            else:
+                yield {
+                    "type": "info",
+                    "message": "💡 搜索暂无结果，以上回答基于 AI 自身知识，可能不够准确。"
+                }
+            self._search_error = ''
             return
         
         # 3. 发送搜索来源信息（带链接）
@@ -167,14 +173,12 @@ class SearchAgent:
         logger.info(f"搜索回答完成: {full_response[:50]}...")
     
     async def _search(self, query: str) -> List[Dict[str, str]]:
-        """
-        执行搜索（支持百度/DuckDuckGo）
-        """
-        # 根据配置选择搜索引擎
-        if self.search_engine == "baidu" and self.baidu_api_key:
+        """执行百度搜索，失败时返回空列表"""
+        if self.baidu_api_key:
             return await self._search_baidu(query)
         else:
-            return await self._search_duckduckgo(query)
+            logger.warning("百度搜索 API Key 未配置")
+            return []
     
     async def _search_baidu(self, query: str) -> List[Dict[str, str]]:
         """
@@ -211,8 +215,14 @@ class SearchAgent:
                     timeout=15.0
                 )
                 
+                if response.status_code == 429:
+                    logger.warning("百度 API 429：每日免费额度已用完")
+                    self._search_error = "quota_exceeded"
+                    return []
+
                 if response.status_code != 200:
                     logger.error(f"百度搜索 API 调用失败: {response.status_code} - {response.text}")
+                    self._search_error = "api_error"
                     return []
                 
                 data = response.json()
@@ -232,53 +242,7 @@ class SearchAgent:
             except Exception as e:
                 logger.error(f"百度搜索失败: {e}")
                 return []
-    
-    async def _search_duckduckgo(self, query: str) -> List[Dict[str, str]]:
-        """
-        使用 DuckDuckGo 搜索（备用）
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    "https://api.duckduckgo.com/",
-                    params={
-                        "q": query,
-                        "format": "json",
-                        "no_html": 1,
-                        "skip_disambig": 1
-                    },
-                    timeout=10.0
-                )
-                
-                if response.status_code != 200:
-                    logger.error(f"DuckDuckGo 搜索 API 调用失败: {response.status_code}")
-                    return []
-                
-                data = response.json()
-                results = []
-                
-                if data.get("Abstract"):
-                    results.append({
-                        "title": data.get("Heading", ""),
-                        "content": data["Abstract"],
-                        "url": data.get("AbstractURL", "")
-                    })
-                
-                for topic in data.get("RelatedTopics", [])[:3]:
-                    if isinstance(topic, dict) and topic.get("Text"):
-                        results.append({
-                            "title": topic.get("Text", "")[:50],
-                            "content": topic["Text"],
-                            "url": topic.get("FirstURL", "")
-                        })
-                
-                logger.info(f"DuckDuckGo 搜索完成: '{query[:30]}...', 找到 {len(results)} 条结果")
-                return results
-                
-            except Exception as e:
-                logger.error(f"DuckDuckGo 搜索失败: {e}")
-                return []
-    
+
     def _build_context(self, results: List[Dict[str, str]]) -> str:
         """
         构建搜索上下文（带标题和链接）

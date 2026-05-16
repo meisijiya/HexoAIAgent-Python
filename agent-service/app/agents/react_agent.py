@@ -154,11 +154,20 @@ class ReActAgent:
                     if isinstance(observation, dict) and func_name == "web_search":
                         obs_summary = observation.get("summary", "")
                         sources = observation.get("sources", [])
+                        is_error = observation.get("error", "")
+
                         if sources:
                             tool_events.append({
                                 "action": func_name,
                                 "sources": sources
                             })
+                        elif is_error or "⚠️" in obs_summary:
+                            # 搜索工具不可用，前端显示友好提示
+                            yield {
+                                "type": "info",
+                                "message": obs_summary
+                            }
+
                         obs_text = obs_summary
                     else:
                         obs_text = str(observation)

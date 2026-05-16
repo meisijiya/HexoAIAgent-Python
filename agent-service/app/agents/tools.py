@@ -8,7 +8,7 @@
 
 变更：
 - 移除知识库工具（与 KnowledgeAgent 重复）
-- 添加 WebSearchTool（支持百度/DuckDuckGo）
+- 添加 WebSearchTool（百度千帆搜索）
 - ReAct Agent 使用 web_search 进行网络搜索
 """
 import os
@@ -32,7 +32,7 @@ class Tool:
 
 
 class WebSearchTool(Tool):
-    """网络搜索工具（支持百度/DuckDuckGo）"""
+    """网络搜索工具（百度千帆搜索 API）"""
     
     def __init__(self):
         super().__init__(
@@ -49,41 +49,34 @@ class WebSearchTool(Tool):
                 "required": ["query"]
             }
         )
-        # 搜索引擎配置
-        self.search_engine = os.getenv("SEARCH_ENGINE", "baidu")
         self.baidu_api_key = os.getenv("BAIDU_SEARCH_API_KEY", "")
     
     async def execute(self, query: str = "", **kwargs) -> str:
-        """执行网络搜索"""
+        """执行网络搜索，百度不可用时返回友好提示"""
         if not query:
-            return "错误：缺少搜索查询参数"
-        
-        # 根据配置选择搜索引擎
-        if self.search_engine == "baidu" and self.baidu_api_key:
-            return await self._search_baidu(query)
-        else:
-            return await self._search_duckduckgo(query)
-    
-    async def _search_baidu(self, query: str) -> Dict[str, Any]:
-        """使用百度千帆搜索 API"""
+            return {"summary": "错误：缺少搜索查询参数", "sources": []}
+
         if not self.baidu_api_key:
-            return {"summary": "错误：百度搜索 API Key 未配置", "sources": []}
-        
+            return {
+                "summary": "⚠️ 搜索工具暂不可用：百度搜索 API Key 未配置。",
+                "sources": []
+            }
+
+        return await self._search_baidu(query)
+
+    async def _search_baidu(self, query: str) -> Dict[str, Any]:
+        """使用百度千帆搜索 API，429 额度耗尽时返回友好提示"""
+        if not self.baidu_api_key:
+            return {"summary": "⚠️ 百度搜索 API Key 未配置", "sources": []}
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     "https://qianfan.baidubce.com/v2/ai_search/web_search",
                     json={
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": query
-                            }
-                        ],
+                        "messages": [{"role": "user", "content": query}],
                         "search_source": "baidu_search_v2",
-                        "resource_type_filter": [
-                            {"type": "web", "top_k": 5}
-                        ],
+                        "resource_type_filter": [{"type": "web", "top_k": 5}],
                         "search_recency_filter": "year"
                     },
                     headers={
@@ -92,17 +85,28 @@ class WebSearchTool(Tool):
                     },
                     timeout=15.0
                 )
-                
+
+                if response.status_code == 429:
+                    logger.warning("百度 API 429：每日免费额度已用完")
+                    return {
+                        "summary": "⚠️ 百度搜索每日免费额度（100次/天）已用完，暂时无法联网搜索。请直接向我提问，我会基于已有知识尽力回答。",
+                        "sources": [],
+                        "error": "quota_exceeded"
+                    }
+
                 if response.status_code != 200:
-                    logger.warning(f"百度搜索 HTTP {response.status_code}，尝试回退到 DuckDuckGo")
-                    return await self._search_duckduckgo(query)
-                
+                    logger.error(f"百度搜索 HTTP {response.status_code}")
+                    return {
+                        "summary": f"⚠️ 搜索服务暂时不可用（HTTP {response.status_code}），请稍后重试或直接提问。",
+                        "sources": []
+                    }
+
                 data = response.json()
                 references = data.get("references", [])
-                
+
                 if not references:
-                    return {"summary": f"搜索'{query}'没有找到相关结果", "sources": []}
-                
+                    return {"summary": f"搜索「{query}」没有找到相关结果", "sources": []}
+
                 formatted = []
                 sources = []
                 for i, ref in enumerate(references[:5], 1):
@@ -111,43 +115,15 @@ class WebSearchTool(Tool):
                     content = ref.get("content", "")[:200]
                     formatted.append(f"[{i}] {title}\n    链接: {url}\n    摘要: {content}...")
                     sources.append({"title": title, "url": url, "snippet": content})
-                
+
                 return {"summary": "\n\n".join(formatted), "sources": sources}
-                
+
         except Exception as e:
-            logger.error(f"百度搜索失败: {e}")
-            return {"summary": f"百度搜索失败：{str(e)}", "sources": []}
-    
-    async def _search_duckduckgo(self, query: str) -> Dict[str, Any]:
-        """使用 DuckDuckGo 搜索（备用）"""
-        try:
-            from duckduckgo_search import DDGS
-            
-            logger.info(f"执行 DuckDuckGo 搜索: {query}")
-            
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=5))
-            
-            if not results:
-                return {"summary": f"搜索'{query}'没有找到相关结果", "sources": []}
-            
-            formatted = []
-            sources = []
-            for i, r in enumerate(results, 1):
-                title = r.get("title", "")
-                href = r.get("href", "")
-                body = r.get("body", "")
-                formatted.append(f"[{i}] {title}\n    链接: {href}\n    摘要: {body[:200]}...")
-                sources.append({"title": title, "url": href, "snippet": body[:200]})
-            
-            return {"summary": "\n\n".join(formatted), "sources": sources}
-            
-        except ImportError:
-            logger.error("duckduckgo_search 未安装")
-            return {"summary": "错误：搜索服务不可用（缺少依赖）", "sources": []}
-        except Exception as e:
-            logger.error(f"DuckDuckGo 搜索失败: {e}")
-            return {"summary": f"DuckDuckGo 搜索失败：{str(e)}", "sources": []}
+            logger.error(f"百度搜索异常: {e}")
+            return {
+                "summary": f"⚠️ 搜索服务连接异常，请直接向我提问。",
+                "sources": []
+            }
 
 
 class KnowledgeSearchTool(Tool):

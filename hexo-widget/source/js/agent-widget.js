@@ -249,6 +249,15 @@
         updateAgentStatus(`[${displayName}] ${message}`, agentName);
     }
 
+    function addInfoBubble(message) {
+        var el = document.createElement('div');
+        el.className = 'hexo-agent-message assistant';
+        el.style.cssText = 'background:#fff3cd;color:#856404;border:1px solid #ffc107;font-size:12px;padding:8px 12px;margin:4px 0;border-radius:6px;';
+        el.textContent = message;
+        $('#agentMessages').appendChild(el);
+        $('#agentMessages').scrollTop = $('#agentMessages').scrollHeight;
+    }
+
     function addSources(articles) {
         let html = '<div class="sources-header">参考来源</div><ul class="hexo-agent-sources-list">';
         articles.forEach(a => {
@@ -567,6 +576,8 @@
                                 hideTyping();
                                 addAgentInfo(data.agent || data.agent_name || 'AI', data.message);
                                 showTyping();
+                            } else if (eventType === 'info') {
+                                addInfoBubble(data.message);
                             } else if (eventType === 'sources') {
                                 addSources(data.articles);
                             } else if (eventType === 'search_options') {
