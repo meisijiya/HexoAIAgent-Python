@@ -160,7 +160,40 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         )
         db.add(assistant_message)
         await db.commit()
-        
+
+        # 保存到 Redis 短期记忆（所有 Agent 流统一在此写入）
+        from app.core.history_manager import history_manager
+        await history_manager.save_message(session_id, "user", request.message)
+        await history_manager.save_message(session_id, "assistant", full_response)
+
+        # 批次语义记忆：每 5 轮触发一次 embedding
+        try:
+            from app.core.redis import get_redis
+            redis = await get_redis()
+            round_key = f"round_counter:{session_id}"
+            round_count = await redis.incr(round_key)
+            await redis.expire(round_key, 86400)  # 24h TTL
+
+            if round_count % 5 == 0:
+                # 查询最近 5 条用户消息
+                result = await db.execute(
+                    select(Message.content)
+                    .where(Message.session_id == session_id, Message.role == "user")
+                    .order_by(Message.created_at.desc())
+                    .limit(5)
+                )
+                user_messages = [row[0] for row in result.all()]
+                user_messages.reverse()  # 时间正序
+
+                if user_messages:
+                    batch_label = f"rounds-{round_count-4}-{round_count}"
+                    user_text = "\n---\n".join(user_messages)
+                    await history_manager.save_batch_memory(
+                        session_id, batch_label, user_text, db
+                    )
+        except Exception as e:
+            logger.warning(f"批次语义记忆写入失败（不阻塞主流程）: {e}")
+
         # 发送完成信号
         yield f"event: done\ndata: {json.dumps({'done': True, 'session_id': session_id, 'agent': agent_type}, ensure_ascii=False)}\n\n"
     

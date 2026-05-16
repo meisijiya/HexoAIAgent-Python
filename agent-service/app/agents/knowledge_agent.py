@@ -120,10 +120,6 @@ class KnowledgeAgent:
                 full_response = response
                 yield {"type": "content", "content": response}
             
-            # 保存到历史
-            if session_id:
-                await history_manager.save_message(session_id, "user", query)
-                await history_manager.save_message(session_id, "assistant", full_response)
             return
         
         # 4. 发送找到的文章信息（带可点击链接）
@@ -197,12 +193,6 @@ class KnowledgeAgent:
             response = await llm_client.chat(messages)
             full_response = response
             yield {"type": "content", "content": response}
-        
-        # 9. 保存到历史
-        if session_id:
-            await history_manager.save_message(session_id, "user", query)
-            await history_manager.save_message(session_id, "assistant", full_response)
-        
         logger.info(f"知识库回答完成: {full_response[:50]}...")
     
     def _generate_blog_url(self, source: str, title: str, metadata: dict = None) -> str:

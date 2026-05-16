@@ -169,11 +169,6 @@ class SearchAgent:
             full_response = response
             yield response
         
-        # 6. 保存到历史
-        if session_id:
-            await history_manager.save_message(session_id, "user", query)
-            await history_manager.save_message(session_id, "assistant", full_response)
-        
         logger.info(f"搜索回答完成: {full_response[:50]}...")
     
     async def _search(self, query: str) -> List[Dict[str, str]]:

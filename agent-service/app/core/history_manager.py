@@ -339,6 +339,60 @@ class HistoryManager:
             except Exception as e:
                 logger.error(f"保存记忆 embedding 失败: {e}")
 
+    async def save_batch_memory(
+        self,
+        session_id: str,
+        batch_label: str,
+        user_messages_text: str,
+        db=None
+    ):
+        """
+        将一批用户消息做 embedding 后写入 pgvector conversation_memories 表
+
+        与 save_memory_embedding 不同，本方法：
+        - 不写 Redis（专注长期记忆）
+        - role 固定为 "batch" 以区分单条消息
+        - 附带 metadata 标识批次范围和轮次数量
+
+        Args:
+            session_id: 会话 ID
+            batch_label: 批次标识，如 "rounds-1-5"
+            user_messages_text: 拼接好的用户消息文本
+            db: 数据库会话（用于写入 pgvector）
+        """
+        if not db:
+            logger.warning("save_batch_memory: db 为空，跳过写入")
+            return
+
+        try:
+            # 内联 import（与 save_memory_embedding 一致）
+            from app.knowledge.embedder import embedding_service
+
+            embedding_vector = await embedding_service.embed_query(user_messages_text)
+
+            memory_entry = ConversationMemory(
+                session_id=session_id,
+                role="batch",
+                content=user_messages_text,
+                embedding=embedding_vector,
+                metadata_={
+                    "type": "batch",
+                    "label": batch_label,
+                    "round_count": 5,
+                },
+            )
+
+            db.add(memory_entry)
+            await db.flush()
+
+            logger.info(
+                f"批次记忆已保存: session={session_id[:8]}..., "
+                f"label={batch_label}, "
+                f"content_len={len(user_messages_text)}"
+            )
+        except Exception as e:
+            logger.error(f"保存批次记忆 embedding 失败: session={session_id[:8]}..., label={batch_label}, error={e}")
+
     # ==================== 对话历史压缩 ====================
 
     async def _compress_history(self, messages: List[Dict]) -> List[Dict]:
