@@ -575,11 +575,38 @@
                                 addKnowledgeSources(data);
                             } else if (eventType === 'search_sources') {
                                 addSearchSources(data);
+                            } else if (eventType === 'react_thought') {
+                                // 思考链流式显示
+                                if (!state.reactThinkingEl) {
+                                    state.reactThinkingEl = document.createElement('div');
+                                    state.reactThinkingEl.className = 'react-thinking-bubble';
+                                    state.reactThinkingEl.innerHTML = '<div class="react-thinking-header">✨ "老江湖" 深度分析中...</div><div class="react-thinking-content"></div>';
+                                    $('#agentMessages').appendChild(state.reactThinkingEl);
+                                    state.reactThinkingContent = '';
+                                }
+                                state.reactThinkingContent += (data.content || '');
+                                var contentEl = state.reactThinkingEl.querySelector('.react-thinking-content');
+                                if (contentEl) {
+                                    contentEl.textContent = state.reactThinkingContent;
+                                }
+                                $('#agentMessages').scrollTop = $('#agentMessages').scrollHeight;
                             } else if (eventType === 'react_action') {
                                 showTyping();
                             } else if (eventType === 'react_search_results') {
                                 // 搜索结果由 react_formatted.tools 统一渲染
+                            } else if (eventType === 'react_observation') {
+                                // 工具调用结果，可折叠展示
+                                if (state.reactThinkingEl) {
+                                    var obsDiv = document.createElement('div');
+                                    obsDiv.className = 'react-observation';
+                                    obsDiv.textContent = (data.content || '').substring(0, 200);
+                                    state.reactThinkingEl.appendChild(obsDiv);
+                                    $('#agentMessages').scrollTop = $('#agentMessages').scrollHeight;
+                                }
                             } else if (eventType === 'react_formatted') {
+                                // 清除思考链状态
+                                state.reactThinkingEl = null;
+                                state.reactThinkingContent = '';
                                 hideTyping();
 
                                 let finalHtml = '';

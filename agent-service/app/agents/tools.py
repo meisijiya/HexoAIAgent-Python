@@ -94,7 +94,8 @@ class WebSearchTool(Tool):
                 )
                 
                 if response.status_code != 200:
-                    return {"summary": f"百度搜索失败：HTTP {response.status_code}", "sources": []}
+                    logger.warning(f"百度搜索 HTTP {response.status_code}，尝试回退到 DuckDuckGo")
+                    return await self._search_duckduckgo(query)
                 
                 data = response.json()
                 references = data.get("references", [])

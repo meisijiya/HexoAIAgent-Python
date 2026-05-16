@@ -479,6 +479,51 @@
     margin-top: 2px;
 }
 
+/* ReAct thinking bubble */
+.react-thinking-bubble {
+    align-self: flex-start;
+    background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e1b4b 100%);
+    color: #c4b5fd;
+    font-size: 13px;
+    max-width: 90%;
+    border: 1px solid #4c1d95;
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin: 6px 0;
+    animation: thinkPulse 2s ease-in-out infinite;
+}
+@keyframes thinkPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.85; }
+}
+.react-thinking-header {
+    font-size: 12px;
+    font-weight: 600;
+    color: #a78bfa;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.react-thinking-content {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.react-observation {
+    font-size: 11px;
+    color: #6b7280;
+    border-top: 1px solid rgba(107, 114, 128, 0.3);
+    margin-top: 6px;
+    padding-top: 6px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 80px;
+    overflow-y: auto;
+}
+
 /* ReAct dark mode */
 @media (prefers-color-scheme: dark) {
     .hexo-agent-message.react-thought { background: #2a2a3d; color: #c4c4d4; border-left-color: #7c6ff7; }
