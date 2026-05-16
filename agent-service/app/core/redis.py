@@ -292,3 +292,36 @@ async def clear_session_redis(session_id: str) -> dict:
 
     logger.info(f"Redis session cleanup for {session_id}: {results}")
     return results
+
+
+# ==================== 每日限流 ====================
+
+async def check_daily_limit(identifier: str, limit: int) -> tuple:
+    """
+    每日限流检查（基于日期滚动 Key）
+
+    Key 格式: daily_rate:{identifier}:{YYYY-MM-DD}
+
+    Returns:
+        (bool, int): (是否允许, 剩余次数)
+    """
+    from datetime import datetime, timedelta
+
+    redis_client = await get_redis()
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    key = f"daily_rate:{identifier}:{today}"
+
+    current = await redis_client.get(key)
+
+    if current is None:
+        tomorrow = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        expire_seconds = int((tomorrow - datetime.utcnow()).total_seconds()) + 1
+        await redis_client.setex(key, expire_seconds, 1)
+        return True, limit - 1
+
+    count = int(current)
+    if count >= limit:
+        return False, 0
+
+    await redis_client.incr(key)
+    return True, limit - count - 1

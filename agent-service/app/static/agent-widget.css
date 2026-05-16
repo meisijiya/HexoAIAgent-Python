@@ -788,9 +788,19 @@
     opacity: 0.7;
     transition: opacity 0.2s, background 0.2s;
 }
-.hexo-agent-clear-btn:hover {
-    opacity: 1;
-    background: rgba(255, 0, 0, 0.1);
+    .hexo-agent-clear-btn:hover {
+        opacity: 1;
+        background: rgba(255, 0, 0, 0.1);
+    }
+}
+
+/* 每日配额显示 */
+.hexo-agent-quota {
+    display: block;
+    text-align: center;
+    font-size: 11px;
+    padding: 2px 0 4px;
+    opacity: 0.85;
 }
 
 @media (max-width: 768px) {

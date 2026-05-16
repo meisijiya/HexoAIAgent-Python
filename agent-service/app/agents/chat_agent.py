@@ -225,7 +225,7 @@ class ChatAgent:
         Args:
             message: 用户消息
             session_id: 会话 ID
-            force_tool: 向后兼容参数（已废弃）
+            force_tool: 可选，强制路由到指定子 Agent（跳过 Phase1 LLM 路由）
             stream: 是否流式输出
             db: 数据库会话（传递给子 Agent 用于语义记忆检索）
 
@@ -251,6 +251,36 @@ class ChatAgent:
                 "previews": previews,
                 "message": f"🧠 回忆了 {sem_info['count']} 个历史话题"
             }
+
+        # ==================== Force Tool Override ====================
+        # 如果指定了 force_tool（如匿名用户强制走 knowledge_agent），
+        # 跳过 Phase1 LLM 路由，直接分发到对应子 Agent
+        if force_tool and force_tool in ("knowledge", "search", "react"):
+            logger.info(f"强制路由: {force_tool} (message: {message[:50]}...)")
+            try:
+                if force_tool == "knowledge":
+                    async for chunk in knowledge_agent.process(
+                        message, session_id, stream, db=db
+                    ):
+                        yield chunk
+                elif force_tool == "search":
+                    async for chunk in search_agent.process(
+                        message, session_id, stream, db=db
+                    ):
+                        yield chunk
+                elif force_tool == "react":
+                    async for chunk in react_agent.process(
+                        message, session_id, stream, db=db
+                    ):
+                        yield chunk
+            except Exception as e:
+                logger.error(f"force_tool 子 Agent ({force_tool}) 处理失败: {e}")
+                yield {
+                    "type": "error",
+                    "code": "SUB_AGENT_ERROR",
+                    "message": f"子 Agent [{force_tool}] 处理失败: {str(e)}",
+                }
+            return
 
         # ==================== Phase1：轻量 LLM 路由分类 ====================
         route_prompt = self._build_route_prompt(message, history)

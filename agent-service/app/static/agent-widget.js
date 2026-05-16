@@ -20,7 +20,9 @@
         abortController: null,
         messages: [],
         position: { x: null, y: null },
-        user: null  // { nickname, avatar_url }
+        user: null,  // { nickname, avatar_url }
+        isAnonymous: true,      // 默认匿名
+        dailyRemaining: 10      // 匿名默认 10 次
     };
 
     function $(selector) { return document.querySelector(selector); }
@@ -203,6 +205,7 @@
                     <div class="hexo-agent-scroll-down" id="agentScrollDown" title="回到底部">↓</div>
                 </div>
                 <div class="hexo-agent-input-area" id="agentInputArea" style="display:none;">
+                    <span class="hexo-agent-quota" id="agentQuota">🟡 游客 · 剩余 10 次</span>
                     <textarea class="hexo-agent-input" id="agentInput" placeholder="输入消息..." rows="1" disabled></textarea>
                     <button class="hexo-agent-send-btn" id="agentSend" disabled>
                         <span class="send-icon">&#10148;</span>
@@ -215,17 +218,31 @@
     }
 
     function showWelcome() {
-        const content = `欢迎来到老江湖的 AI 助手。
-
-**基本用法：**
-- 直接提问技术问题，会优先从知识库检索
-- 输入「上网搜 + 关键词」触发网络搜索
-- 输入「对比/分析 + 主题」触发深度推理
-- 知识库搜不到时会提示你，要不要上网搜
-
-有问题随时问，祝你探索愉快。`;
-        const messagesEl = $('#agentMessages');
-        const messageEl = document.createElement('div');
+        var content;
+        if (state.token) {
+            // GitHub 登录用户欢迎语
+            content = '🎉 登录成功！我是老江湖，一个皮肤黝黑的技术人。\n\n' +
+                      '🔍 **我能做什么：**\n' +
+                      '- 回答技术问题（知识库 + 联网搜索）\n' +
+                      '- 记住对话上下文，支持多轮追问\n' +
+                      '- 搜索本地文档和教程\n' +
+                      '- 深度推理复杂问题\n\n' +
+                      '💬 直接输入问题开始聊天吧！';
+        } else {
+            // 匿名用户欢迎语
+            content = '👋 你好！当前为**游客模式**。\n\n' +
+                      '⚠️ **限制：**\n' +
+                      '- 每天只能提问 10 次\n' +
+                      '- 仅支持知识库查询\n' +
+                      '- 对话不会被保存\n\n' +
+                      '🔑 **登录 GitHub 解锁全部功能：**\n' +
+                      '- 每天 100 次提问\n' +
+                      '- 联网搜索 + 深度推理\n' +
+                      '- 对话记忆与历史回顾\n\n' +
+                      '点击下方按钮登录吧 👇';
+        }
+        var messagesEl = $('#agentMessages');
+        var messageEl = document.createElement('div');
         messageEl.className = 'hexo-agent-message system';
         messageEl.innerHTML = renderMarkdown(content);
         messagesEl.appendChild(messageEl);
@@ -516,6 +533,20 @@
         setTimeout(() => { notif.style.opacity = '0'; }, 3000);
     }
 
+    // 更新每日配额显示
+    function updateQuotaDisplay() {
+        var el = document.querySelector('.hexo-agent-quota');
+        if (!el) return;
+        var rem = state.dailyRemaining != null ? state.dailyRemaining : '?';
+        if (state.isAnonymous) {
+            el.textContent = '🟡 游客 · 剩余 ' + rem + ' 次';
+            el.style.color = '#e6a817';
+        } else {
+            el.textContent = '🟢 已登录 · 剩余 ' + rem + ' 次';
+            el.style.color = '#2da44e';
+        }
+    }
+
     // ==================== Send ====================
     async function handleSend() {
         if (state.isProcessing) {
@@ -743,6 +774,9 @@
                                 scrollToBottom();
                             } else if (eventType === 'done') {
                                 state.sessionId = data.session_id;
+                                state.isAnonymous = data.is_anonymous || false;
+                                state.dailyRemaining = data.daily_remaining;
+                                updateQuotaDisplay();
                                 saveState();
                                 hideAgentStatus();
                             }
