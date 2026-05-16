@@ -3,8 +3,16 @@
 
 存储用户信息，支持 GitHub OAuth 登录和匿名用户
 """
-from sqlalchemy import Column, String, BigInteger, Boolean, DateTime
+from sqlalchemy import Column, String, BigInteger, Boolean, DateTime, Enum
 from app.models.base import BaseModel
+import enum
+
+
+class UserRole(str, enum.Enum):
+    """用户角色枚举"""
+    USER = "user"       # 普通用户
+    ADMIN = "admin"     # 管理员
+    BANNED = "banned"   # 已封禁
 
 
 class User(BaseModel):
@@ -62,6 +70,22 @@ class User(BaseModel):
         DateTime,
         nullable=True,
         comment="最后活跃时间"
+    )
+    
+    # 角色（用于后台管理权限控制）
+    role = Column(
+        String(20),
+        default=UserRole.USER,
+        nullable=False,
+        comment="用户角色: user / admin / banned"
+    )
+    
+    # 账号状态（封禁/停用时设为 False）
+    is_active = Column(
+        Boolean,
+        default=True,
+        nullable=False,
+        comment="账号是否激活"
     )
     
     def __repr__(self):

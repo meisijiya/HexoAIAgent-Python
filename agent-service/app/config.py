@@ -5,6 +5,7 @@
 支持 .env 文件和系统环境变量
 """
 from pydantic_settings import BaseSettings
+from pydantic import validator
 from typing import Optional
 
 
@@ -31,6 +32,16 @@ class Settings(BaseSettings):
     
     # ==================== JWT 配置 ====================
     SECRET_KEY: str = "your-secret-key-change-in-production"
+    
+    @validator("SECRET_KEY")
+    def validate_secret_key(cls, v):
+        """验证 SECRET_KEY 是否为不安全默认值"""
+        if v == "your-secret-key-change-in-production":
+            raise ValueError(
+                "请设置环境变量 SECRET_KEY（当前使用不安全默认值）"
+            )
+        return v
+    
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 天
     

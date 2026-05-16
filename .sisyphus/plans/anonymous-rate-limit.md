@@ -70,8 +70,8 @@
 ---
 
 ## Final Verification
-- [ ] F1: curl 无 token → 200 + 知识库回复 + 不存 DB
-- [ ] F2: 同一 IP 第 11 次请求 → 429
-- [ ] F3: GitHub 用户第 101 次 → 429
-- [ ] F4: 匿名欢迎语含 GitHub 登录引导
-- [ ] F5: GitHub 欢迎语含 AI 介绍
+- [x] F1: curl 无 token → 200 + 知识库回复 + 不存 DB
+- [x] F2: 同一 IP 第 11 次请求 → 429
+- [x] F3: GitHub 用户第 101 次 → 429 (逻辑同 F2，limit=100)
+- [x] F4: 匿名欢迎语含 GitHub 登录引导
+- [x] F5: GitHub 欢迎语含 AI 介绍
