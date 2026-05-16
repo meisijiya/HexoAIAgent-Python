@@ -777,6 +777,22 @@
 .hexo-agent-option-btn.done:hover { opacity: 0.85; }
 
 /* Responsive */
+/* 清除会话按钮 */
+.hexo-agent-clear-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s, background 0.2s;
+}
+.hexo-agent-clear-btn:hover {
+    opacity: 1;
+    background: rgba(255, 0, 0, 0.1);
+}
+
 @media (max-width: 768px) {
     .hexo-agent-popup {
         width: calc(100vw - 16px);

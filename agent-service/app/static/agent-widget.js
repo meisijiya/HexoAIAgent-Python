@@ -454,7 +454,8 @@
             var avatar = state.user.avatar_url
                 ? '<img src="' + state.user.avatar_url + '" class="hexo-agent-user-avatar">'
                 : '<div class="hexo-agent-user-avatar-default"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg></div>';
-            userInfoEl.innerHTML = '<div class="hexo-agent-user-info">' + avatar + '<span class="hexo-agent-user-name">' + escapeHtml(state.user.nickname || '') + '</span><button class="hexo-agent-logout-btn" id="btnLogout" title="退出登录">&times;</button></div>';
+            userInfoEl.innerHTML = '<div class="hexo-agent-user-info">' + avatar + '<span class="hexo-agent-user-name">' + escapeHtml(state.user.nickname || '') + '</span><button class="hexo-agent-clear-btn" id="btnClear" title="清除会话">🗑️</button><button class="hexo-agent-logout-btn" id="btnLogout" title="退出登录">&times;</button></div>';
+            $('#btnClear').addEventListener('click', clearSession);
             $('#btnLogout').addEventListener('click', handleLogout);
         } else {
             userInfoEl.innerHTML = '';
@@ -469,6 +470,50 @@
         saveState();
         updateUI();
         addMessage('system', '已退出登录');
+    }
+
+    async function clearSession() {
+        if (!state.sessionId) {
+            showNotification('当前无会话');
+            return;
+        }
+
+        const confirmed = confirm('确定清除当前会话？数据将在 7 天后彻底删除。');
+        if (!confirmed) return;
+
+        try {
+            const resp = await fetch(`${CONFIG.API_BASE}/api/chat/session/${state.sessionId}?token=${encodeURIComponent(state.token)}`, {
+                method: 'DELETE'
+            });
+
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+            localStorage.removeItem('hexo_agent_session');
+            state.sessionId = null;
+            state.messages = [];
+            saveState();
+
+            const msgArea = $('#agentMessages');
+            if (msgArea) msgArea.innerHTML = '';
+
+            showNotification('会话已清除，下次发送将自动开始新对话');
+
+        } catch (err) {
+            alert('清除失败: ' + err.message);
+        }
+    }
+
+    function showNotification(msg) {
+        let notif = document.querySelector('.hexo-agent-notification');
+        if (!notif) {
+            notif = document.createElement('div');
+            notif.className = 'hexo-agent-notification';
+            notif.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:8px 16px;border-radius:4px;font-size:13px;z-index:1000;opacity:0;transition:opacity 0.3s;';
+            document.body.appendChild(notif);
+        }
+        notif.textContent = msg;
+        notif.style.opacity = '1';
+        setTimeout(() => { notif.style.opacity = '0'; }, 3000);
     }
 
     // ==================== Send ====================

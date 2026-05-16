@@ -3,7 +3,7 @@
 
 存储对话消息，包括用户输入和 Agent 回复
 """
-from sqlalchemy import Column, String, Text, ForeignKey
+from sqlalchemy import Column, String, Text, ForeignKey, DateTime
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -54,6 +54,14 @@ class Message(BaseModel):
         JSONB,
         nullable=True,
         comment="扩展数据"
+    )
+    
+    # 软删除时间
+    deleted_at = Column(
+        DateTime,
+        nullable=True,
+        default=None,
+        comment="软删除时间"
     )
     
     # 关联关系

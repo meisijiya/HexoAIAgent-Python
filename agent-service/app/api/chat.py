@@ -9,16 +9,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from pydantic import BaseModel
 from loguru import logger
 
 from app.core.database import get_db
-from app.core.redis import check_rate_limit
+from app.core.redis import check_rate_limit, clear_session_redis
 from app.agents.chat_agent import chat_agent
-from app.models.user import User
 from app.models.session import Session
 from app.models.message import Message
+from app.models.memory import ConversationMemory
 from app.auth.token import verify_token
 
 router = APIRouter(prefix="/api/chat", tags=["对话"])
@@ -30,6 +30,74 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     command: Optional[str] = None
     token: str
+
+
+@router.delete("/session/{session_id}")
+async def delete_session(session_id: str, token: str, db: AsyncSession = Depends(get_db)):
+    """
+    清除会话：Redis 数据清理 + PG 软删除
+    
+    Args:
+        session_id: 会话 ID
+        token: JWT Token
+    
+    Returns:
+        dict: 清理结果统计
+    """
+    # 1. 权限校验
+    user_id = verify_token(token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效的 Token")
+    
+    # 验证会话存在且属于当前用户
+    result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            Session.user_id == user_id
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    
+    try:
+        # 2. Redis 清理（短期记忆 + round counter）
+        await clear_session_redis(session_id)
+        
+        # 3. PG 软删除 messages
+        msg_result = await db.execute(
+            update(Message)
+            .where(Message.session_id == session_id, Message.deleted_at == None)
+            .values(deleted_at=datetime.utcnow())
+        )
+        deleted_messages = msg_result.rowcount
+        
+        # 4. PG 软删除 memories（向量记忆）
+        mem_result = await db.execute(
+            update(ConversationMemory)
+            .where(ConversationMemory.session_id == session_id, ConversationMemory.deleted_at == None)
+            .values(deleted_at=datetime.utcnow())
+        )
+        deleted_memories = mem_result.rowcount
+        
+        # 5. 软删除 session（保留元数据行，标记删除时间）
+        session.deleted_at = datetime.utcnow()
+        session.last_active_at = None
+        
+        # 6. 提交事务
+        await db.commit()
+        
+        logger.info(f"已清除会话 {session_id}: messages={deleted_messages}, memories={deleted_memories}")
+        
+        return {
+            "ok": True,
+            "deleted_messages": deleted_messages,
+            "deleted_memories": deleted_memories
+        }
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"清除会话失败: {e}")
+        raise HTTPException(status_code=500, detail=f"清除失败: {str(e)}")
 
 
 @router.post("")
@@ -79,6 +147,7 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
         session = result.scalar_one_or_none()
         if not session:
             raise HTTPException(status_code=404, detail="会话不存在")
+        session.last_active_at = datetime.utcnow()
     
     # 保存用户消息到数据库
     user_message = Message(
@@ -223,10 +292,9 @@ async def get_sessions(token: str, db: AsyncSession = Depends(get_db)):
     if not user_id:
         raise HTTPException(status_code=401, detail="无效的 Token")
     
-    # 查询会话
     result = await db.execute(
         select(Session)
-        .where(Session.user_id == user_id)
+        .where(Session.user_id == user_id, Session.deleted_at == None)
         .order_by(Session.updated_at.desc())
         .limit(20)
     )
@@ -274,7 +342,7 @@ async def get_messages(session_id: str, token: str, db: AsyncSession = Depends(g
     # 查询消息
     result = await db.execute(
         select(Message)
-        .where(Message.session_id == session_id)
+        .where(Message.session_id == session_id, Message.deleted_at == None)
         .order_by(Message.created_at.asc())
     )
     messages = result.scalars().all()

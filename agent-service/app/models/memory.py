@@ -73,6 +73,14 @@ class ConversationMemory(Base):
         comment="创建时间"
     )
     
+    # 软删除时间
+    deleted_at = Column(
+        DateTime,
+        nullable=True,
+        default=None,
+        comment="软删除时间"
+    )
+    
     # 索引定义
     __table_args__ = (
         Index('ix_conversation_memories_session_created', 'session_id', 'created_at'),

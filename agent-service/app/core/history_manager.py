@@ -271,6 +271,7 @@ class HistoryManager:
         result = await db.execute(
             select(ConversationMemory)
             .where(ConversationMemory.session_id == session_id)
+            .where(ConversationMemory.deleted_at == None)
             .where(ConversationMemory.embedding.isnot(None))
             .order_by(ConversationMemory.created_at.desc())
         )

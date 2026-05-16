@@ -680,9 +680,23 @@
     background: rgba(139, 92, 246, 0.08);
     border: 1px solid rgba(139, 92, 246, 0.2);
     border-radius: 10px;
-    padding: 3px 10px;
+    padding: 4px 12px;
     margin: 2px 0;
     transition: opacity 0.5s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    max-width: 85%;
+}
+.semantic-recall-preview {
+    font-size: 10px;
+    color: #a78bfa;
+    opacity: 0.7;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Scroll-to-bottom button */
@@ -763,6 +777,22 @@
 .hexo-agent-option-btn.done:hover { opacity: 0.85; }
 
 /* Responsive */
+/* 清除会话按钮 */
+.hexo-agent-clear-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s, background 0.2s;
+}
+.hexo-agent-clear-btn:hover {
+    opacity: 1;
+    background: rgba(255, 0, 0, 0.1);
+}
+
 @media (max-width: 768px) {
     .hexo-agent-popup {
         width: calc(100vw - 16px);

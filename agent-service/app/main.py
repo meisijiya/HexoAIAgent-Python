@@ -7,7 +7,9 @@ FastAPI 应用入口模块
 - 管理应用生命周期
 - 注册路由
 """
+import asyncio
 from contextlib import asynccontextmanager
+from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +20,7 @@ import os
 from app.config import settings
 from app.core.database import init_db, close_db
 from app.core.redis import init_redis, close_redis
+from app.core.cleanup import _cleanup_loop
 
 # 导入路由
 from app.api.auth import router as auth_router
@@ -26,29 +29,48 @@ from app.api.knowledge import router as knowledge_router
 from app.api.search import router as search_router
 
 
+cleanup_task: Optional[asyncio.Task] = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     应用生命周期管理
-    
-    启动时：初始化数据库连接、Redis 连接
-    关闭时：清理资源
+
+    启动时：初始化数据库连接、Redis 连接，启动定时清理任务
+    关闭时：清理资源，关闭清理任务
     """
+    global cleanup_task
+
     # ========== 启动 ==========
     logger.info("🚀 启动 Hexo Agent Service...")
     logger.info(f"📦 版本: {settings.APP_VERSION}")
     logger.info(f"🔧 调试模式: {settings.DEBUG}")
-    
+
     # 初始化数据库（创建表）
     await init_db()
-    
+
     # 初始化 Redis
     await init_redis()
-    
+
+    # 启动后台定时清理任务
+    cleanup_task = asyncio.create_task(_cleanup_loop())
+    logger.info("✅ 定时清理任务已启动")
+
     yield
-    
+
     # ========== 关闭 ==========
     logger.info("👋 关闭 Hexo Agent Service...")
+
+    # 关闭定时清理任务
+    if cleanup_task:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("清理任务已关闭")
+
     await close_db()
     await close_redis()
 

@@ -7,7 +7,7 @@ Redis 连接模块
 - 封装常用操作
 """
 import json
-from typing import Optional, Any
+from typing import Optional
 import redis.asyncio as redis
 from loguru import logger
 
@@ -252,3 +252,43 @@ async def check_rate_limit(user_id: str, limit: int = 30, window: int = 60) -> b
     # 增加计数
     await redis_client.incr(key)
     return True
+
+
+# ==================== 会话清理工具 ====================
+
+async def clear_session_redis(session_id: str) -> dict:
+    """
+    清除会话的 Redis 数据（不删除 rate 限流键）
+
+    清除 session:{id}:context 和 round_counter:{id} 两个键。
+    保留 rate:{user_id}（全局限流）、embedding:*（知识库缓存）、oauth:state:*（OAuth 状态）。
+
+    Args:
+        session_id: 会话 ID
+
+    Returns:
+        dict: 包含每个键的删除结果 {'context_deleted': bool, 'counter_deleted': bool}
+    """
+    redis_client = await get_redis()
+    results = {}
+
+    # 清除 session context（List）
+    context_key = f"session:{session_id}:context"
+    try:
+        deleted = await redis_client.delete(context_key)
+        results["context_deleted"] = deleted >= 0
+    except Exception as e:
+        logger.warning(f"清除 session context 失败: {context_key}, error={e}")
+        results["context_deleted"] = False
+
+    # 清除 round counter
+    counter_key = f"round_counter:{session_id}"
+    try:
+        deleted = await redis_client.delete(counter_key)
+        results["counter_deleted"] = deleted >= 0
+    except Exception as e:
+        logger.warning(f"清除 round counter 失败: {counter_key}, error={e}")
+        results["counter_deleted"] = False
+
+    logger.info(f"Redis session cleanup for {session_id}: {results}")
+    return results

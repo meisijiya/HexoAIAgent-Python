@@ -1,41 +1,41 @@
 {
-  "active_plan": "/home/ljh2923/opencode-project/Hexo-智能体Agent插件/.sisyphus/plans/feature-wave-2026-05-15.md",
-  "started_at": "2026-05-15T15:56:53.756Z",
+  "active_plan": "/home/ljh2923/opencode-project/Hexo-智能体Agent插件/.sisyphus/plans/clear-session-history.md",
+  "started_at": "2026-05-16T15:35:56.320Z",
   "session_ids": [
-    "ses_1d3f06648ffe31DOgJ3SniACxh"
+    "ses_1cf723969ffenpQW1IHcRtZ5Hd"
   ],
+  "plan_name": "clear-session-history",
+  "worktree_path": null,
   "session_origins": {
-    "ses_1d3f06648ffe31DOgJ3SniACxh": "direct"
+    "ses_1cf723969ffenpQW1IHcRtZ5Hd": "direct"
   },
-  "plan_name": "feature-wave-2026-05-15",
-  "agent": "atlas",
   "task_sessions": {
-    "todo:2": {
-      "task_key": "todo:2",
-      "task_label": "2",
-      "task_title": "创建 OAuth 回调 HTML 页面（oauth-callback.html）",
-      "session_id": "ses_1d3970b65ffeQuY8vfCcn6HVoM",
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Message 模型加 `deleted_at` 字段",
+      "session_id": "ses_1ce912932ffe40Lk3EDZDd9ULT",
       "agent": "Sisyphus-Junior",
       "category": "quick",
-      "updated_at": "2026-05-15T16:16:26.028Z"
+      "updated_at": "2026-05-16T15:38:22.679Z"
     },
     "todo:6": {
       "task_key": "todo:6",
       "task_label": "6",
-      "task_title": "记忆模块 HistoryManager 重构",
-      "session_id": "ses_1d38fd410ffewXHt6wsWwjQxVd",
-      "agent": "Sisyphus-Junior",
-      "category": "visual-engineering",
-      "updated_at": "2026-05-15T16:29:06.870Z"
-    },
-    "todo:11": {
-      "task_key": "todo:11",
-      "task_label": "11",
-      "task_title": "OAuth 端到端流程联调",
-      "session_id": "ses_1d387167bffeDyyCzy7qs6229w",
+      "task_title": "DELETE /api/chat/session/{session_id} 端点",
+      "session_id": "ses_1ce8e642cffeVCCBeW00ISulLT",
       "agent": "Sisyphus-Junior",
       "category": "deep",
-      "updated_at": "2026-05-15T16:32:28.625Z"
+      "updated_at": "2026-05-16T15:41:52.139Z"
+    },
+    "todo:9": {
+      "task_key": "todo:9",
+      "task_label": "9",
+      "task_title": "前端清除按钮 + 清除逻辑",
+      "session_id": "ses_1ce897094ffeCSYGnlTUtPURVs",
+      "agent": "Sisyphus-Junior",
+      "category": "visual-engineering",
+      "updated_at": "2026-05-16T15:47:37.335Z"
     }
   }
 }
