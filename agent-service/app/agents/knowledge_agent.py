@@ -95,9 +95,54 @@ class KnowledgeAgent:
                 db, query, dynamic=True, categories=categories, tags=tags
             )
         
-        # 3. 知识库无匹配或相似度过低 → 提示用户 + fallback 到 LLM 自身知识
+        # 3. 知识库无匹配或相似度过低 → 尝试分类/标签列表（如有过滤条件）
         max_score = max((r.score for r in search_results), default=0)
-        if not search_results or max_score < 0.6:
+        if (not search_results or max_score < 0.6) and (categories or tags):
+            from sqlalchemy import select as sa_select, text as sa_text
+            from app.models.knowledge import Article as KA
+            filter_parts = []
+            if categories:
+                escaped = [c.replace("'", "''") for c in categories]
+                filter_parts.append(f"c.metadata->'categories' ?| ARRAY{escaped}")
+            if tags:
+                escaped = [t.replace("'", "''") for t in tags]
+                filter_parts.append(f"EXISTS (SELECT 1 FROM jsonb_array_elements_text(c.metadata->'tags') elem WHERE LOWER(elem) IN ({','.join('LOWER(' + chr(39) + t + chr(39) + ')' for t in escaped)}))")
+            filter_sql = " AND ".join(filter_parts)
+            sql = sa_text(f"""
+                SELECT DISTINCT ON (a.id) a.id, a.title, a.url,
+                       c.metadata->'categories' as categories,
+                       c.metadata->'tags' as tags
+                FROM knowledge_articles a
+                JOIN knowledge_chunks c ON c.article_id = a.id
+                WHERE {filter_sql}
+                LIMIT 20
+            """)
+            async with async_session_maker() as db2:
+                result = await db2.execute(sql)
+                rows = result.fetchall()
+            if rows:
+                articles = [{"name": f"{' / '.join(r.categories) if r.categories else '?'} | {r.title}",
+                            "title": r.title, "blog_url": r.url,
+                            "score": 1.0} for r in rows]
+                yield {"type": "knowledge_sources", "message": f"📋 {categories[0] if categories else tags[0]} 分类共 {len(articles)} 篇文章",
+                       "articles": articles}
+                cat_label = categories[0] if categories else (tags[0] if tags else "")
+                fallback_prompt = f"""以下是{cat_label}分类下的文章列表。请用中文简要介绍这些文章，并引导用户提问。
+
+{chr(10).join(f'- {a["title"]} ({a["blog_url"]})' for a in articles)}
+
+用户问：{query}"""
+                messages = [{"role": "user", "content": fallback_prompt}]
+                full_response = ""
+                if stream:
+                    async for chunk in llm_client.chat_stream(messages):
+                        full_response += chunk
+                        yield {"type": "content", "content": chunk}
+                else:
+                    response = await llm_client.chat(messages)
+                    full_response = response
+                    yield {"type": "content", "content": response}
+                return
             logger.info(f"知识库无匹配，提示用户选择是否上网搜索")
             
             yield {"type": "info", "message": "知识库未找到相关内容"}

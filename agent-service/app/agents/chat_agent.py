@@ -257,13 +257,22 @@ class ChatAgent:
 
         # ==================== Force Tool Override ====================
         # 如果指定了 force_tool（如匿名用户强制走 knowledge_agent），
-        # 跳过 Phase1 LLM 路由，直接分发到对应子 Agent
+        # 跳过 Phase1 LLM 路由，用正则提取分类/标签过滤条件
+        force_filters = None
         if force_tool and force_tool in ("knowledge", "search", "react"):
+            if force_tool == "knowledge":
+                import re
+                cat_m = re.search(r'(\S+)分类', message)
+                tag_m = re.search(r'(\S+)标签', message)
+                if cat_m or tag_m:
+                    force_filters = {}
+                    if cat_m: force_filters["categories"] = [cat_m.group(1)]
+                    if tag_m: force_filters["tags"] = [tag_m.group(1)]
             logger.info(f"强制路由: {force_tool} (message: {message[:50]}...)")
             try:
                 if force_tool == "knowledge":
                     async for chunk in knowledge_agent.process(
-                        message, session_id, stream, db=db
+                        message, session_id, stream, db=db, filters=force_filters
                     ):
                         yield chunk
                 elif force_tool == "search":
