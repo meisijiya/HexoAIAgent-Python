@@ -812,7 +812,7 @@
         left: 8px;
         border-radius: 12px;
     }
-    .hexo-agent-trigger { bottom: 20px; right: 20px; width: 48px; height: 48px; }
+    .hexo-agent-trigger { bottom: calc(50% - 24px); right: 16px; width: 48px; height: 48px; }
 }
 
 /* ==================== Sources Bar ==================== */
