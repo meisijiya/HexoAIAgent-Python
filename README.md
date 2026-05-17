@@ -341,26 +341,26 @@ Hexo-智能体Agent插件/
 │       ├── auth/                   # 认证模块
 │       │   ├── token.py            # JWT 签发/验证
 │       │   └── github_oauth.py     # GitHub OAuth 流程
-│       └── static/                 # 前端静态文件
-│           ├── agent-widget.js     # 对话 Widget（1000+ 行）
+│       └── static/                 # 前端静态文件（服务器直接提供，Hexo 无需拷贝）
+│           ├── agent-widget.js     # 对话 Widget（__API_BASE__ 占位符，sync-widget.sh 注入）
 │           ├── agent-widget.css    # Widget 样式
 │           └── oauth-callback.html # OAuth 回调页
 │
-├── hexo-widget/                    # Hexo 插件（NPM 包）
+├── hexo-widget/                    # Hexo 插件（NPM 包，本地 hexo server 调试用）
 │   ├── package.json
-│   ├── index.js                    # Hexo 插件入口（注入 JS/CSS + 缓存版本控制）
-│   ├── version.json                # 自动生成的内容哈希（sync-widget.sh 写入）
-│   ├── layout/widget.swig          # Swig 模板注入
+│   ├── index.js                    # 注入 JS/CSS 标签
+│   ├── version.json                # 内容哈希（sync-widget.sh 自动生成）
+│   ├── layout/widget.swig
 │   └── source/
-│       ├── js/agent-widget.js      # Widget JS（部署到主题）
-│       └── css/agent-widget.css    # Widget CSS（部署到主题）
+│       ├── js/agent-widget.js      # Widget JS（同 static/ 副本）
+│       └── css/agent-widget.css    # Widget CSS（同 static/ 副本）
 │
 └── scripts/
     ├── agent.sh                    # 🎯 交互式运维脚手架（一键管理所有操作）
-    ├── sync-widget.sh              # 前端同步脚本（JS/CSS → Hexo 主题 + 版本哈希）
+    ├── sync-widget.sh              # Widget 构建（注入 API_BASE + 版本哈希）
     ├── sync_articles.py            # 文章增量同步（date + hash key + --reset）
     ├── import_articles.py          # 手动导入博文到知识库
-    └── init-db.sql                 # PostgreSQL 初始化 SQL（GIN 索引 + 表结构）
+    └── init-db.sql                 # PostgreSQL 初始化（pgvector 扩展）
 ```
 
 ---
@@ -402,22 +402,19 @@ bash scripts/agent.sh
 
 ---
 
-### `scripts/sync-widget.sh` — 前端代码同步
+### `scripts/sync-widget.sh` — Widget 构建脚本
 
-将 Widget JS/CSS 从开发目录同步到 Hexo 主题目录 + npm 包目录，并自动生成内容哈希。
+将 `.env` 中的 `API_BASE` 注入 Widget JS 占位符，生成版本哈希。**注：博客直接从服务器加载 Widget，不再拷贝到 Hexo 目录。**
 
 ```bash
 bash scripts/sync-widget.sh
 ```
 
 **工作流**：
-1. 读取 `.env` 中 `HEXO_THEME_PATH`
-2. 复制 `agent-widget.js/css` → Chic 主题 `source/js/` 和 `source/css/`
-3. 复制 → `hexo-widget/source/`
-4. 计算 JS 内容 SHA256 → 写入 `hexo-widget/version.json`
-5. Hexo 插件读取 hash → 注入 `?v=<hash>` URL 参数
-
-**缓存策略**：`?v=<sha256>` 参数确保内容不变时浏览器用缓存，内容变了自动刷新。
+1. 读取 `.env` 中 `API_BASE`（如 `http://localhost:8001` 或 `https://你的域名`）
+2. 替换 JS 源码中 `__API_BASE__` 占位符
+3. 计算 JS 内容 SHA256 → 写入 `hexo-widget/version.json`
+4. Docker 重建后，服务器 `/static/agent-widget.js` 即包含正确 API 地址
 
 ---
 
@@ -549,15 +546,46 @@ bash scripts/sync-widget.sh                  # 同步前端 Widget
 python3 scripts/sync_articles.py --reset     # 全量同步文章到知识库
 ```
 
-### 第四步：部署前端到 Hexo
+### 第四步：配置 Hexo 主题（Chic 主题为例）
+
+Widget 由服务器直接提供，Hexo 博客**不需要拷贝任何文件**。只需在主题中加配置：
+
+#### 4a. 主题配置文件 `_config.yml` 添加
+
+```yaml
+agent_widget:
+  enable: true
+  api_url: https://你的域名       # 服务器地址（生产）或 http://localhost:8001（本地调试）
+  position: bottom-right
+```
+
+#### 4b. 创建 Widget 注入模板 `layout/_partial/agent-widget.ejs`
+
+```ejs
+<% if (theme.agent_widget && theme.agent_widget.enable !== false) { %>
+    <% var apiUrl = theme.agent_widget.api_url || 'http://localhost:8001'; %>
+    <!-- Agent Widget -->
+    <link rel="stylesheet" href="<%= apiUrl %>/static/agent-widget.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="<%= apiUrl %>/static/agent-widget.js"></script>
+<% } %>
+```
+
+#### 4c. 布局引入 `layout/layout.ejs`
+
+在 `<head>` 中加入：
+
+```ejs
+<%- partial('_partial/agent-widget',{cache: false}) %>
+```
+
+#### 4d. 重新构建并部署 Hexo
 
 ```bash
-# 同步 Widget 文件到主题
-bash scripts/sync-widget.sh
-
-# 重新构建并部署 Hexo
 hexo clean && hexo generate && hexo deploy
 ```
+
+> 💡 以上 3 个文件就是你博客需要的全部前端代码。Widget JS/CSS 由服务器 FastAPI `/static/` 提供，更新 Widget 时只需 `docker compose build` 重建服务端，无需重新部署 Hexo。
 
 ### 第五步：申请 GitHub OAuth App
 
