@@ -182,10 +182,14 @@
                 </div>
             </div>
             <div class="hexo-agent-popup" id="agentPopup">
-                <div class="hexo-agent-header">
-                    <span class="hexo-agent-header-title">AI 助手</span>
-                    <button class="hexo-agent-header-close" id="agentClose">&times;</button>
-                </div>
+              <div class="hexo-agent-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <span class="hexo-agent-header-title">老江湖AI 助手</span>
+    
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span class="hexo-agent-quota" id="agentQuota">🟡 游客 · 剩余 10 次</span>
+                <button class="hexo-agent-header-close" id="agentClose">&times;</button>
+            </div>
+            </div>
             <div class="hexo-agent-status">
                 <span><span class="hexo-agent-status-dot" id="statusDot"></span><span id="statusText">未连接</span></span>
                 <span id="agentTypeText" class="hexo-agent-type-text" style="display:none;"></span>
@@ -208,7 +212,6 @@
                     <div class="hexo-agent-scroll-down" id="agentScrollDown" title="回到底部">↓</div>
                 </div>
                 <div class="hexo-agent-input-area" id="agentInputArea" style="display:none;">
-                    <span class="hexo-agent-quota" id="agentQuota">🟡 游客 · 剩余 10 次</span>
                     <textarea class="hexo-agent-input" id="agentInput" placeholder="输入消息..." rows="1" disabled></textarea>
                     <button class="hexo-agent-send-btn" id="agentSend" disabled>
                         <span class="send-icon">&#10148;</span>
@@ -242,7 +245,7 @@
                       '- 每天 100 次提问\n' +
                       '- 联网搜索 + 深度推理\n' +
                       '- 对话记忆与历史回顾\n\n' +
-                      '点击下方按钮登录吧 👇';
+                      '点击右上方按钮登录吧！';
         }
         var messagesEl = $('#agentMessages');
         var messageEl = document.createElement('div');
