@@ -5,7 +5,7 @@
 """
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -145,13 +145,19 @@ async def get_current_user(token: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/anonymous")
-async def create_anonymous_user(db: AsyncSession = Depends(get_db)):
+async def create_anonymous_user(fastapi_request: Request, db: AsyncSession = Depends(get_db)):
     """
-    创建匿名用户
+    创建匿名用户（IP 限流：每分钟最多 3 次）
     
     Returns:
         dict: 包含 token 和用户信息
     """
+    # IP 限流
+    client_ip = fastapi_request.client.host if fastapi_request.client else "unknown"
+    from app.core.redis import check_rate_limit
+    if not await check_rate_limit(f"anon_auth:{client_ip}", limit=3, window=60):
+        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
+    
     # 创建匿名用户
     user = User(
         nickname=f"匿名用户_{uuid.uuid4().hex[:8]}",

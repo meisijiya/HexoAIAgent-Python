@@ -4,6 +4,7 @@
 功能：
 - 每日凌晨自动过期：30 天无活动的会话 → 软删除其 messages/memories
 - 定期物理删除：软删除超过 7 天的记录
+- 匿名用户清理：7 天未活跃的匿名用户 → 物理删除
 """
 import asyncio
 from datetime import datetime, timedelta
@@ -14,6 +15,7 @@ from app.core.database import async_session_maker
 from app.models.session import Session
 from app.models.message import Message
 from app.models.memory import ConversationMemory
+from app.models.user import User
 
 
 async def run_cleanup():
@@ -21,6 +23,7 @@ async def run_cleanup():
     执行一轮清理：
     1. 软删除 30 天无活动的会话数据
     2. 物理删除 7 天前软删除的记录
+    3. 物理删除 7 天未活跃的匿名用户
     """
     async with async_session_maker() as db:
         # ── ① 自动过期：30 天无活动 ──
@@ -72,6 +75,18 @@ async def run_cleanup():
         logger.info(
             f"物理删除清理：messages={msg_del.rowcount}, memories={mem_del.rowcount}"
         )
+
+        # ── ③ 匿名用户清理：7 天未活跃 ──
+        cutoff_anon = datetime.utcnow() - timedelta(days=7)
+        anon_del = await db.execute(
+            delete(User).where(
+                User.is_anonymous == True,
+                User.last_active_at < cutoff_anon
+            )
+        )
+        await db.commit()
+        if anon_del.rowcount:
+            logger.info(f"匿名用户清理：删除了 {anon_del.rowcount} 个过期匿名用户")
 
 
 async def _cleanup_loop():
