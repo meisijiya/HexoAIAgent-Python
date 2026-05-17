@@ -814,3 +814,61 @@
     }
     .hexo-agent-trigger { bottom: 20px; right: 20px; width: 48px; height: 48px; }
 }
+
+/* ==================== Sources Bar ==================== */
+.hexo-agent-sources-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 12px;
+    background: var(--agent-bg-secondary, #f6f8fa);
+    border-bottom: 1px solid var(--agent-border, #e1e4e8);
+    font-size: 11px;
+    line-height: 1.4;
+    max-height: 60px;
+    overflow-y: auto;
+}
+.hexo-agent-sources-bar .sources-bar-label {
+    color: var(--agent-text-secondary, #656d76);
+    margin-right: 4px;
+    white-space: nowrap;
+}
+.hexo-agent-sources-bar a,
+.hexo-agent-sources-bar span {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 6px;
+    background: var(--agent-bg, #fff);
+    border: 1px solid var(--agent-border, #d0d7de);
+    border-radius: 10px;
+    text-decoration: none;
+    color: var(--agent-text, #24292f);
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.hexo-agent-sources-bar a:hover {
+    background: var(--agent-primary-light, #ddf4ff);
+    border-color: var(--agent-primary, #0969da);
+}
+.hexo-agent-sources-bar small { color: var(--agent-text-secondary); opacity: 0.7; }
+.dark-theme .hexo-agent-sources-bar,
+.hexo-agent-widget.dark-mode .hexo-agent-sources-bar {
+    background: #1c2128;
+    border-color: #373e47;
+}
+.dark-theme .hexo-agent-sources-bar a,
+.dark-theme .hexo-agent-sources-bar span,
+.hexo-agent-widget.dark-mode .hexo-agent-sources-bar a,
+.hexo-agent-widget.dark-mode .hexo-agent-sources-bar span {
+    background: #22272e;
+    border-color: #373e47;
+    color: #adbac7;
+}
+.dark-theme .hexo-agent-sources-bar a:hover,
+.hexo-agent-widget.dark-mode .hexo-agent-sources-bar a:hover {
+    background: #1c3b5c;
+    border-color: #316dca;
+}

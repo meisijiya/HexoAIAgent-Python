@@ -186,12 +186,13 @@
                     <span class="hexo-agent-header-title">AI 助手</span>
                     <button class="hexo-agent-header-close" id="agentClose">&times;</button>
                 </div>
-                <div class="hexo-agent-status">
-                    <span><span class="hexo-agent-status-dot" id="statusDot"></span><span id="statusText">未连接</span></span>
-                    <span id="agentTypeText" class="hexo-agent-type-text" style="display:none;"></span>
-                    <span id="userInfo"></span>
-                </div>
-                <div class="hexo-agent-messages" id="agentMessages"></div>
+            <div class="hexo-agent-status">
+                <span><span class="hexo-agent-status-dot" id="statusDot"></span><span id="statusText">未连接</span></span>
+                <span id="agentTypeText" class="hexo-agent-type-text" style="display:none;"></span>
+                <span id="userInfo"></span>
+            </div>
+            <div class="hexo-agent-sources-bar" id="agentSourcesBar" style="display:none;"></div>
+            <div class="hexo-agent-messages" id="agentMessages"></div>
                 <div class="hexo-agent-typing" id="agentTyping">
                     <span></span><span></span><span></span>
                     <span class="hexo-agent-status-text" id="agentStatusText" style="display:none;"></span>
@@ -221,7 +222,7 @@
 
     function showWelcome() {
         var content;
-        if (state.token) {
+        if (state.token && !state.isAnonymous) {
             // GitHub 登录用户欢迎语
             content = '🎉 登录成功！我是老江湖，一个皮肤黝黑的技术人。\n\n' +
                       '🔍 **我能做什么：**\n' +
@@ -241,7 +242,7 @@
                       '- 每天 100 次提问\n' +
                       '- 联网搜索 + 深度推理\n' +
                       '- 对话记忆与历史回顾\n\n' +
-                      '点击右上方的按钮进行登录吧 👇';
+                      '点击下方按钮登录吧 👇';
         }
         var messagesEl = $('#agentMessages');
         var messageEl = document.createElement('div');
@@ -312,16 +313,46 @@
     }
 
     function addSources(articles) {
-        let html = '<div class="sources-header">参考来源</div><ul class="hexo-agent-sources-list">';
-        articles.forEach(a => {
-            const name = a.name || a.relative_path || '未知';
-            const score = a.score ? ` (${(a.score * 100).toFixed(0)}%)` : '';
-            const blogUrl = a.blog_url || '';
-            if (blogUrl && blogUrl !== 'https://meisijiya.github.io') {
-                html += `<li><a href="${escapeHtml(blogUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(name)}</a>${score}</li>`;
-            } else {
-                html += `<li>${escapeHtml(name)}${score}</li>`;
-            }
+        var bar = $('#agentSourcesBar');
+        if (!bar) return;
+        var items = articles.map(function(a) {
+            var name = a.name || a.title || '未知';
+            var blogUrl = a.blog_url || '';
+            return blogUrl
+                ? '<a href="' + escapeHtml(blogUrl) + '" target="_blank" rel="noopener">📄 ' + escapeHtml(name) + '</a>'
+                : '<span>📄 ' + escapeHtml(name) + '</span>';
+        }).join('');
+        bar.innerHTML = '<span class="sources-bar-label">🔍 参考来源</span>' + items;
+        bar.style.display = 'block';
+    }
+
+    function addSearchSources(data) {
+        var bar = $('#agentSourcesBar');
+        if (!bar) return;
+        var items = data.sources.map(function(s) {
+            var title = s.title || '未知';
+            return s.url
+                ? '<a href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener">🌐 ' + escapeHtml(title) + '</a>'
+                : '<span>🌐 ' + escapeHtml(title) + '</span>';
+        }).join('');
+        bar.innerHTML = '<span class="sources-bar-label">🌐 ' + escapeHtml(data.message) + '</span>' + items;
+        bar.style.display = 'block';
+    }
+
+    function addKnowledgeSources(data) {
+        var bar = $('#agentSourcesBar');
+        if (!bar) return;
+        var items = data.articles.map(function(a) {
+            var name = a.name || a.title || '未知';
+            var score = a.score ? ' <small>(' + (a.score * 100).toFixed(0) + '%)</small>' : '';
+            var blogUrl = a.blog_url || '';
+            return blogUrl
+                ? '<a href="' + escapeHtml(blogUrl) + '" target="_blank" rel="noopener">📚 ' + escapeHtml(name) + '</a>' + score
+                : '<span>📚 ' + escapeHtml(name) + '</span>' + score;
+        }).join('');
+        bar.innerHTML = '<span class="sources-bar-label">📚 ' + escapeHtml(data.message.split('，')[0]) + '</span>' + items;
+        bar.style.display = 'block';
+    }
         });
         html += '</ul>';
         addMessage('assistant', html, { className: 'sources' });
@@ -541,6 +572,8 @@
 
             const msgArea = $('#agentMessages');
             if (msgArea) msgArea.innerHTML = '';
+            var bar = $('#agentSourcesBar');
+            if (bar) { bar.innerHTML = ''; bar.style.display = 'none'; }
 
             showNotification('会话已清除，下次发送将自动开始新对话');
 
@@ -922,9 +955,24 @@
                 state.token = e.data.token;
                 state.user = e.data.user || null;
                 saveState();
-                updateUI();
-                addMessage('system', 'GitHub 登录成功！');
-            } else if (e.data && e.data.type === 'github-oauth-error') {
+                // 立即查询用户身份，避免刷新后仍显示游客
+                fetch(`${CONFIG.API_BASE}/api/auth/me?token=${encodeURIComponent(state.token)}`)
+                    .then(r => r.json())
+                    .then(user => {
+                        state.isAnonymous = user.is_anonymous || false;
+                        state.user = state.user || { nickname: user.nickname, avatar_url: user.avatar_url };
+                        updateQuotaDisplay();
+                        saveState();
+                        updateUI();
+                        addMessage('system', 'GitHub 登录成功！');
+                    })
+                    .catch(() => {
+                        state.isAnonymous = false;
+                        updateUI();
+                        addMessage('system', 'GitHub 登录成功！');
+                    });
+                return;
+            }
                 addMessage('system', 'GitHub 登录失败：' + (e.data.error || '未知错误'));
             }
         });
