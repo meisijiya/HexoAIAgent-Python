@@ -63,12 +63,20 @@ async def init_db():
     """
     初始化数据库
     
-    创建所有表结构
+    创建所有表结构 + GIN 索引
     """
+    from sqlalchemy import text
+    
     async with engine.begin() as conn:
         # 导入所有模型以确保它们被注册
         from app.models import Base
         await conn.run_sync(Base.metadata.create_all)
+        
+        # 创建 GIN 索引（init-db.sql 执行时表还不存在，这里补充）
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_metadata_gin "
+            "ON knowledge_chunks USING GIN (metadata)"
+        ))
     logger.info("✅ 数据库表创建完成")
 
 
