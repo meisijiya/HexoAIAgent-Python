@@ -26,6 +26,9 @@ HEXO_THEME_CSS="$HEXO_THEME_DIR/source/css/agent-widget.css"
 WIDGET_JS="$PROJECT_DIR/hexo-widget/source/js/agent-widget.js"
 WIDGET_CSS="$PROJECT_DIR/hexo-widget/source/css/agent-widget.css"
 
+# 版本缓存文件
+VERSION_FILE="$PROJECT_DIR/hexo-widget/version.json"
+
 echo "📦 Hexo Agent Widget 同步"
 echo "   Hexo 主题: $HEXO_THEME_DIR"
 echo "========================="
@@ -39,6 +42,11 @@ cp "$SRC_JS" "$HEXO_THEME_JS" && echo "✅ JS → Chic 主题"
 cp "$SRC_CSS" "$HEXO_THEME_CSS" && echo "✅ CSS → Chic 主题"
 cp "$SRC_JS" "$WIDGET_JS" && echo "✅ JS → hexo-widget"
 cp "$SRC_CSS" "$WIDGET_CSS" && echo "✅ CSS → hexo-widget"
+
+# 生成 JS 内容哈希（浏览器缓存版本控制：内容不变→hash不变→浏览器用缓存）
+WIDGET_HASH=$(sha256sum "$SRC_JS" | cut -c1-12)
+echo "{\"hash\": \"$WIDGET_HASH\", \"synced_at\": \"$(date -Iseconds)\"}" > "$VERSION_FILE"
+echo "✅ 版本 Hash: $WIDGET_HASH → hexo-widget/version.json"
 
 echo ""
 echo "🎉 同步完成！刷新 http://localhost:4000 测试"
