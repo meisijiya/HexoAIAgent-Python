@@ -192,6 +192,44 @@ def build_blog_url(article: Dict) -> str:
 
 
 # ── 核心同步逻辑 ──
+async def reset_and_reimport():
+    """全量重置：删除本地记录 + PG 向量数据 → 重新全部导入"""
+    # 确认操作
+    record_path = os.path.join(BLOG_ARTICLES_DIR, SYNC_RECORD_FILE)
+    confirm = input(
+        f"\n⚠️  确认全量重置？\n"
+        f"   将删除：\n"
+        f"   1. {record_path}\n"
+        f"   2. PostgreSQL knowledge_articles + knowledge_chunks 全部数据\n\n"
+        f"   输入 yes 确认: "
+    ).strip()
+    if confirm.lower() != "yes":
+        print("❌ 取消操作")
+        return
+
+    # 删除本地记录
+    if os.path.exists(record_path):
+        os.remove(record_path)
+        print(f"🗑️  已删除 {record_path}")
+
+    # 删除 PG 向量数据
+    sys.path.insert(0, str(PROJECT_DIR / "agent-service"))
+    os.chdir(PROJECT_DIR / "agent-service")
+    from app.core.database import async_session_maker
+    from app.models.knowledge import Article, Chunk
+    from sqlalchemy import delete as sa_delete
+
+    async with async_session_maker() as db:
+        chunk_count = (await db.execute(sa_delete(Chunk))).rowcount
+        article_count = (await db.execute(sa_delete(Article))).rowcount
+        await db.commit()
+        print(f"🗑️  PG 已清空: {chunk_count} chunks, {article_count} articles")
+
+    # 全量重新导入
+    print()
+    await sync_articles(force=True, dry_run=False)
+
+
 async def sync_articles(force: bool = False, dry_run: bool = False):
     """主同步流程"""
     print("📚 Hexo 博文增量同步")
@@ -230,6 +268,12 @@ async def sync_articles(force: bool = False, dry_run: bool = False):
             print(f"   + {a['title'][:40]}  date={a['date']}")
         for a in modified:
             print(f"   ~ {a['title'][:40]}  date={a['date']}")
+        return
+
+    # 交互式确认
+    confirm = input(f"\n⚠️  即将导入/更新 {len(added) + len(modified)} 篇文章（DashScope API 计费）。输入 yes 确认: ").strip()
+    if confirm.lower() != "yes":
+        print("❌ 取消")
         return
 
     # 3. 导入数据库（复用项目内模块）
@@ -317,12 +361,23 @@ async def sync_articles(force: bool = False, dry_run: bool = False):
 
 
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if not a.startswith("--") or a == "--force" or a == "--dry-run"]
-    force = "--force" in sys.argv
-    dry = "--dry-run" in sys.argv
+    reset_mode = "--reset" in sys.argv
+    force_mode = "--force" in sys.argv
+    dry_mode = "--dry-run" in sys.argv
 
     if not BLOG_ARTICLES_DIR:
         print("❌ 请在 agent-service/.env 中设置 BLOG_ARTICLES_DIR=你的文章父级目录")
         sys.exit(1)
 
-    asyncio.run(sync_articles(force=force, dry_run=dry))
+    if reset_mode:
+        asyncio.run(reset_and_reimport())
+    elif force_mode:
+        confirm = input(f"⚠️  全量重导 {BLOG_ARTICLES_DIR} 下所有文章？会调用 DashScope API 计费。输入 yes 确认: ").strip()
+        if confirm.lower() == "yes":
+            asyncio.run(sync_articles(force=True, dry_run=False))
+        else:
+            print("❌ 取消")
+    elif dry_mode:
+        asyncio.run(sync_articles(force=False, dry_run=True))
+    else:
+        asyncio.run(sync_articles(force=False, dry_run=False))
