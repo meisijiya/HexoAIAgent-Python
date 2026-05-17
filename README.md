@@ -11,23 +11,23 @@
 
 ## 📖 项目简介
 
-**Hexo AI Agent** 是一个为 Hexo 博客添加 AI 对话能力的插件系统。访客可以在博客右下角打开对话窗口，与 AI 助手聊天：
+**Hexo AI Agent** 是一个为 Hexo 博客添加 AI 对话能力的插件系统。访客可以在博客右下角打开对话窗口，与 AI 助手"老江湖"聊天：
 
 - 📚 **知识库问答**：基于你的博客文章（pgvector + DashScope embedding）
 - 🌐 **联网搜索**：实时搜索补充信息（百度千帆 API）
-- 🧠 **记忆系统**：语义记忆 + 混合检索（Redis + pgvector）
+- 🧠 **记忆系统**：短期记忆 + 语义记忆混合检索
 - 🔐 **GitHub OAuth 登录**：区分匿名游客和注册用户
 - 📊 **功能分级**：匿名 10次/天，登录 100次/天
 
 ---
 
-## 🏗️ 技术架构
+## 🏗️ 系统架构
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                     Hexo 博客 (GitHub Pages)              │
 │  ┌──────────────────────────────────────────────────┐   │
-│  │  Chic 主题 /js/agent-widget.js                   │   │
+│  │  Chic 主题 /js/agent-widget.js    (?v=sha256)     │   │
 │  │  Chic 主题 /css/agent-widget.css                  │   │
 │  └──────────────────┬───────────────────────────────┘   │
 └─────────────────────┼───────────────────────────────────┘
@@ -49,7 +49,7 @@
 │  │  └─ ReActAgent       → 工具调用链                  │   │
 │  ├──────────────────────────────────────────────────┤   │
 │  │  Core                                              │   │
-│  │  ├─ history_manager  → 短期记忆（Redis context）    │   │
+│  │  ├─ history_manager  → 短期记忆 + 语义记忆         │   │
 │  │  ├─ cleanup          → 定时清理（30天过期）         │   │
 │  │  └─ git_sync         → Git 轮询博文自动同步        │   │
 │  └──────────────────────────────────────────────────┘   │
@@ -78,6 +78,222 @@
 
 ---
 
+## 🧠 三 Agent 架构详解
+
+### 路由决策链路
+
+```
+用户消息 → ChatAgent.phase1_classify()
+              │
+              │ LLM 轻量分类 (max_tokens=150, temperature=0)
+              │ 输出纯 JSON: {"route":"knowledge|search|react|null", ...}
+              │
+     ┌────────┼────────┬────────┐
+     ▼        ▼        ▼        ▼
+ knowledge  search   react    null
+     │        │        │        │
+     │        │        │        └→ ChatAgent.chat_stream() 纯聊天
+     │        │        │
+     │        │        └→ ReactAgent.run()
+     │        │              ├─ 思考链展示
+     │        │              ├─ web_search / knowledge_search
+     │        │              └─ 最终综合分析
+     │        │
+     │        └→ SearchAgent.search()
+     │               ├─ 百度千帆 API
+     │               └─ SEO 摘要 + 来源链接
+     │
+     └→ KnowledgeAgent.process()
+            ├─ 按 categories/tags 过滤
+            ├─ retriever.search() pgvector 语义检索
+            ├─ LLM 辅助相关性筛选（候选＞3）
+            └─ 构建 chunk 级别上下文 → 流式回答
+```
+
+### 1. ChatAgent — 对话路由中枢
+
+**位置**：`agent-service/app/agents/chat_agent.py`
+
+**职责**：
+- 维护老江湖人设（`PERSONALITY_PROMPT`）
+- 管理对话风格（`CHAT_STYLE`）
+- Phase1：LLM 轻量分类 → 决定调哪个子 Agent
+- Phase2：纯聊天时流式输出（逐字）
+
+**Skill 系统**：Skill 是路由的权威来源，动态生成 Phase1 分类提示词：
+
+```python
+SKILLS = {
+    "knowledge": {
+        "triggers": ["怎么", "如何", "配置", "部署", "教程", "原理", ...],
+        "route_json": '{"route":"knowledge", ...}'
+    },
+    "search": {
+        "triggers": ["上网搜", "最新", "新闻", "百度", ...],
+        "route_json": '{"route":"search", ...}'
+    },
+    "react": {
+        "triggers": ["对比", "分析", "优缺点", "推荐", "区别", ...],
+        "route_json": '{"route":"react", ...}'
+    },
+}
+```
+
+**匿名用户路由**：跳过 Phase1，`force_tool="knowledge"`，直接走知识库 Agent。
+
+**登录用户**：Phase1 LLM 提取 `categories`/`tags` → 透传给 KnowledgeAgent 做精准过滤。
+
+---
+
+### 2. KnowledgeAgent — 知识库 RAG
+
+**位置**：`agent-service/app/agents/knowledge_agent.py`
+
+**流程**：
+```
+用户消息 + categories + tags
+    │
+    ▼
+retriever.search(query, categories, tags, top_k=5, threshold=0.45)
+    │  ← pgvector cosine 语义检索 + JSONB GIN 索引过滤
+    │
+    ▼
+候选 > 3 && (categories or tags)?
+    │ YES → LLM 辅助相关性筛选（挑真正相关的 chunk）
+    │ NO  → 全部使用
+    │
+    ▼
+_build_context(chunks) → 拼接 chunk 级别上下文（不传整篇）
+    │
+    ▼
+DeepSeek 流式生成回答 + 文章来源链接
+```
+
+**关键优化**：
+- 分块前剥离 YAML front-matter（避免元数据污染向量）
+- 标签统一小写化 + 大小写不敏感搜索
+- JSONB GIN 索引（`idx_chunks_metadata_gin`）→ 筛选查询 1.24ms
+- 分类/标签无匹配时兜底走文章清单 API → LLM 总结
+
+---
+
+### 3. SearchAgent — 联网搜索
+
+**位置**：`agent-service/app/agents/search_agent.py`
+
+**流程**：
+```
+用户消息 → 百度千帆 web_search API（top_k=5）
+    │
+    ▼
+SEO 结果格式化 → 来源列表
+    │
+    ▼
+前端 addSearchSources() 展示可点击链接
+```
+
+---
+
+### 4. ReActAgent — 工具调用链
+
+**位置**：`agent-service/app/agents/react_agent.py`
+
+**模式**：ReAct（Reasoning + Acting）→ 思考 → 决策 → 行动 → 观察 → 综合
+
+```
+用户复杂问题（对比/分析/推荐）
+    │
+    ▼
+思考链展示：列出分析维度
+    │
+    ▼
+需要外部信息？
+    │ YES → 调用 tool (web_search / knowledge_search)
+    │        │
+    │        └→ 获取结果 → 回到思考链
+    │ NO  → 直接给出综合分析
+    │
+    ▼
+流式输出最终答案
+```
+
+---
+
+## 🧠 记忆系统
+
+### 双层架构
+
+```
+┌─────────────────────────────────────────┐
+│           短期记忆 (Redis LIST)            │
+│  最近 5 轮对话 (user + assistant)         │
+│  TTL: 30 天                              │
+│  用途：保持当前对话上下文连贯               │
+└──────────────┬──────────────────────────┘
+               │ 每 5 轮触发一次 batch embed
+               ▼
+┌─────────────────────────────────────────┐
+│          语义记忆 (pgvector)              │
+│  仅嵌入用户消息 + embedding 向量           │
+│  跨会话检索：cosine top-3                │
+│  用途：跨会话关联相关话题                  │
+└─────────────────────────────────────────┘
+```
+
+### 混合检索流程
+
+```
+用户发消息
+    │
+    ├→ history_manager.get_context(session_id)
+    │      ├─ 短期记忆：Redis 最近 5 轮
+    │      └─ 语义记忆：pgvector 余弦 top-3（跨会话）
+    │
+    └→ 拼接 → 注入 LLM system prompt
+```
+
+### 前端展示
+
+- 语义记忆命中时显示徽章：`🧠 回忆了 X 个话题`（5 秒自动消失）
+- 知识库结果显示文章链接 + 相似度分数
+
+---
+
+## 🛠️ 工具系统
+
+**位置**：`agent-service/app/agents/tools.py`
+
+### 已注册工具
+
+| 工具名 | 类 | 用途 | 状态 |
+|--------|-----|------|------|
+| `web_search` | `WebSearchTool` | 百度千帆搜索（100次/天免费额度） | ✅ 启用 |
+| `knowledge_search` | `KnowledgeSearchTool` | pgvector 语义检索知识库 | ✅ 启用 |
+
+### WebSearchTool
+
+```
+输入：查询词 → POST 百度千帆 web_search API
+    │
+    ├→ 正常：返回 top-5 结果（标题+URL+摘要）
+    ├→ 429：额度耗尽 → 友好提示
+    └→ 超时：连接异常 → 友好提示
+```
+
+配置：`.env` 中设置 `BAIDU_SEARCH_API_KEY`
+
+### KnowledgeSearchTool
+
+```
+输入：查询词 → retriever.search(query, top_k=5)
+    │
+    └→ 返回 chunk 内容 + 相似度分数 + 文章来源
+```
+
+被 ReActAgent 调用，用于工具链中的知识库检索步骤。
+
+---
+
 ## 📁 项目结构
 
 ```
@@ -91,31 +307,34 @@ Hexo-智能体Agent插件/
 │   ├── .env                        # 环境变量（gitignored）
 │   ├── .env.example
 │   ├── requirements.txt
-│   ├── requirements-dev.txt
+│   ├── .dockerignore
 │   └── app/
 │       ├── main.py                 # FastAPI 入口 + 生命周期管理
 │       ├── config.py               # 全局配置（pydantic-settings）
 │       ├── api/                    # REST API 路由
 │       │   ├── auth.py             # GitHub OAuth + 匿名登录
 │       │   ├── chat.py             # SSE 流式对话
-│       │   ├── knowledge.py        # 知识库 CRUD
+│       │   ├── knowledge.py        # 知识库 CRUD + 分类/标签筛选
 │       │   └── search.py           # 联网搜索
 │       ├── agents/                 # AI Agent 层
 │       │   ├── chat_agent.py       # 对话路由（Phase1 LLM 分类）
 │       │   ├── knowledge_agent.py  # RAG 知识库问答
+│       │   ├── search_agent.py     # 联网搜索
 │       │   ├── react_agent.py      # ReAct 工具调用链
-│       │   └── search_agent.py     # 联网搜索
+│       │   └── tools.py            # 工具定义（WebSearch / KnowledgeSearch）
 │       ├── core/                   # 核心服务
 │       │   ├── database.py         # asyncpg + pgvector
 │       │   ├── redis.py            # 会话上下文 + 限流
 │       │   ├── history_manager.py  # 短期记忆 + 语义记忆
-│       │   ├── cleanup.py          # 定时清理（30天过期）
+│       │   ├── cleanup.py          # 定时清理（30天过期 + 匿名7天）
 │       │   ├── git_sync.py         # Git 轮询博文自动同步
-│       │   └── llm.py              # DeepSeek 客户端
+│       │   ├── llm.py              # DeepSeek 客户端
+│       │   ├── prompt_builder.py   # 系统提示词构建
+│       │   └── retry_handler.py    # LLM 重试逻辑
 │       ├── knowledge/              # 知识库模块
 │       │   ├── chunker.py          # Markdown 分块
 │       │   ├── embedder.py         # DashScope embedding
-│       │   ├── retriever.py        # pgvector 检索
+│       │   ├── retriever.py        # pgvector 检索 + JSONB 过滤
 │       │   └── frontmatter_parser.py
 │       ├── models/                 # SQLAlchemy 模型
 │       │   ├── user.py, session.py, message.py, memory.py, knowledge.py
@@ -123,22 +342,139 @@ Hexo-智能体Agent插件/
 │       │   ├── token.py            # JWT 签发/验证
 │       │   └── github_oauth.py     # GitHub OAuth 流程
 │       └── static/                 # 前端静态文件
-│           ├── agent-widget.js     # 对话 Widget（900+ 行）
+│           ├── agent-widget.js     # 对话 Widget（1000+ 行）
 │           ├── agent-widget.css    # Widget 样式
 │           └── oauth-callback.html # OAuth 回调页
 │
 ├── hexo-widget/                    # Hexo 插件（NPM 包）
 │   ├── package.json
-│   ├── index.js                    # Hexo 插件入口
+│   ├── index.js                    # Hexo 插件入口（注入 JS/CSS + 缓存版本控制）
+│   ├── version.json                # 自动生成的内容哈希（sync-widget.sh 写入）
 │   ├── layout/widget.swig          # Swig 模板注入
 │   └── source/
 │       ├── js/agent-widget.js      # Widget JS（部署到主题）
 │       └── css/agent-widget.css    # Widget CSS（部署到主题）
 │
 └── scripts/
-    ├── setup-server.sh             # 服务器一键初始化脚本
-    └── import_articles.py          # 手动导入博文脚本
+    ├── agent.sh                    # 🎯 交互式运维脚手架（一键管理所有操作）
+    ├── sync-widget.sh              # 前端同步脚本（JS/CSS → Hexo 主题 + 版本哈希）
+    ├── sync_articles.py            # 文章增量同步（date + hash key + --reset）
+    ├── import_articles.py          # 手动导入博文到知识库
+    └── init-db.sql                 # PostgreSQL 初始化 SQL（GIN 索引 + 表结构）
 ```
+
+---
+
+## 📜 脚本使用指南
+
+### `scripts/agent.sh` — 交互式运维脚手架
+
+**一键管理所有操作**，自动检测本地/远程模式。
+
+```bash
+bash scripts/agent.sh
+```
+
+```
+╔══════════════════════════════════════════╗
+║       🤖 Hexo Agent 运维脚手架           ║
+╠══════════════════════════════════════════╣
+║  💻 本地模式                             ║
+╚══════════════════════════════════════════╝
+
+  🐳 Docker 服务:
+    1. 启动服务      4. 查看日志      7. 重建容器
+    2. 停止服务      5. 进入容器
+    3. 重启服务      6. 健康检查
+
+  📦 知识库同步:
+    a. 增量同步文章    c. 预览变更
+    b. 全量重置文章    d. 手动导入 (旧脚本)
+
+  🎨 前端:
+    f. 同步 Widget 到 Hexo 主题
+
+  🧹 其他:
+    x. 手动执行清理    q. 退出
+```
+
+**远程模式**：本地无 Docker 时，配置 `agent-service/.env` 中 `SERVER_HOST` → 自动 SSH 代理所有服务器命令。
+
+---
+
+### `scripts/sync-widget.sh` — 前端代码同步
+
+将 Widget JS/CSS 从开发目录同步到 Hexo 主题目录 + npm 包目录，并自动生成内容哈希。
+
+```bash
+bash scripts/sync-widget.sh
+```
+
+**工作流**：
+1. 读取 `.env` 中 `HEXO_THEME_PATH`
+2. 复制 `agent-widget.js/css` → Chic 主题 `source/js/` 和 `source/css/`
+3. 复制 → `hexo-widget/source/`
+4. 计算 JS 内容 SHA256 → 写入 `hexo-widget/version.json`
+5. Hexo 插件读取 hash → 注入 `?v=<hash>` URL 参数
+
+**缓存策略**：`?v=<sha256>` 参数确保内容不变时浏览器用缓存，内容变了自动刷新。
+
+---
+
+### `scripts/sync_articles.py` — 文章增量同步
+
+基于 front-matter date + 路径 hash 做增量同步，避免重复导入。
+
+```bash
+# 增量同步（只导入新增/变更文章）
+python3 scripts/sync_articles.py
+
+# 预览变更（不实际写入）
+python3 scripts/sync_articles.py --dry-run
+
+# 全量重置（删除全部 → 重新导入）
+python3 scripts/sync_articles.py --reset
+```
+
+**同步记录**：`.sync_record.json` 记录每篇文章的 hash、日期、URL。
+
+```json
+{
+  "2024-03-15_a3f8c2d1": {
+    "title": "Hexo 部署教程",
+    "hash": "a3f8c2d1e9b0f4a5c6d7e8f9a0b1c2d3",
+    "url": "https://xn--ljhfjm-dl0o.top/2024/03/15/hexo-deploy/",
+    "synced_at": "2026-05-17T10:30:00+08:00"
+  }
+}
+```
+
+---
+
+### `scripts/import_articles.py` — 手动导入博文
+
+```bash
+# 导入指定目录
+python3 scripts/import_articles.py /path/to/hexo/source/_posts
+
+# 强制重新导入（覆盖已有）
+python3 scripts/import_articles.py /path/to/hexo/source/_posts --force
+
+# 清空知识库
+python3 scripts/import_articles.py --clear
+
+# Docker 中使用
+docker exec hexo-agent-service python scripts/import_articles.py /data/blog-repo/source/_posts
+```
+
+---
+
+### `scripts/init-db.sql` — 数据库初始化
+
+PostgreSQL 容器首次启动时自动执行，包含：
+- 表结构（users, sessions, messages, knowledge_articles, knowledge_chunks, memories）
+- GIN 索引（`idx_chunks_metadata_gin` 用于 JSONB 过滤）
+- pgvector 扩展 + 余弦相似度索引
 
 ---
 
@@ -151,18 +487,7 @@ Hexo-智能体Agent插件/
 - GitHub 账号（用于 OAuth App 注册）
 - [可选] 备用 GitHub 仓库（用于 Git 自动同步博文）
 
-### 第一步：服务器初始化
-
-```bash
-# SSH 登录服务器
-ssh root@<你的服务器IP>
-
-# 运行初始化脚本
-curl -fsSL <脚本URL> | bash
-# 或手动安装 Docker（参考 scripts/setup-server.sh）
-```
-
-### 第二步：配置环境变量
+### 第一步：配置环境变量
 
 ```bash
 # 编辑 agent-service/.env
@@ -183,21 +508,28 @@ GITHUB_CLIENT_SECRET=<你的ClientSecret>
 GITHUB_REDIRECT_URI=http://<服务器IP>:8001/static/oauth-callback.html
 
 # ---- CORS 白名单 ----
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:4001,https://xn--ljhfjm-dl0o.top,https://meisijiya.github.io,http://<服务器IP>:8001
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:4001,https://你的域名,https://meisijiya.github.io,http://<服务器IP>:8001
 
 # ---- 博客配置 ----
-BLOG_BASE_URL=https://xn--ljhfjm-dl0o.top
+BLOG_BASE_URL=https://你的域名
+HEXO_THEME_PATH=/path/to/your/hexo/themes/Chic
+BLOG_ARTICLES_DIR=/path/to/your/hexo/source/_posts
 
 # ---- AI API Keys ----
 DEEPSEEK_API_KEY=sk-xxx
 DASHSCOPE_API_KEY=sk-xxx
 
-# ---- Git 同步（可选，默认关闭） ----
-GIT_SYNC_ENABLED=false
-# GIT_REPO_URL=https://github.com/meisijiya/your-backup-repo.git
+# ---- 搜索（可选） ----
+BAIDU_SEARCH_API_KEY=xxx
+
+# ---- 远程运维（可选） ----
+# 本地无 Docker 时，agent.sh 通过 SSH 连接服务器
+SERVER_HOST=你的服务器IP
+SERVER_USER=root
+SERVER_PROJECT_PATH=/opt/hexo-agent
 ```
 
-### 第三步：启动 Docker 服务
+### 第二步：启动 Docker 服务
 
 ```bash
 # 生产启动
@@ -210,61 +542,29 @@ docker compose -f docker-compose.prod.yml logs -f agent-service
 curl http://localhost:8001/health
 ```
 
-### 第四步：导入博客文章到知识库
+### 第三步：导入博客文章到知识库
 
 ```bash
-# 在服务器上执行（需要先把博文目录上传或用 git clone）
-docker exec hexo-agent-service python scripts/import_articles.py /data/blog-repo/source/_posts
+bash scripts/sync-widget.sh                  # 同步前端 Widget
+python3 scripts/sync_articles.py --reset     # 全量同步文章到知识库
 ```
 
-### 第五步：配置 Hexo 主题（Chic 主题示例）
-
-本项目前端 Widget 代码嵌入在 Hexo 主题文件夹中。以 Chic 主题为例：
-
-#### 5a. 复制文件到主题目录
+### 第四步：部署前端到 Hexo
 
 ```bash
-# 将 Widget 文件复制到 Chic 主题
-cp hexo-widget/source/js/agent-widget.js  themes/Chic/source/js/
-cp hexo-widget/source/css/agent-widget.css  themes/Chic/source/css/
-```
+# 同步 Widget 文件到主题
+bash scripts/sync-widget.sh
 
-#### 5b. 修改 `agent-widget.js` 中的 API 地址
-
-打开 `themes/Chic/source/js/agent-widget.js`，修改第 8 行：
-
-```javascript
-API_BASE: 'http://<你的服务器IP>:8001',   // 生产环境改为实际服务器地址
-```
-
-#### 5c. 注入到页面
-
-在主题布局文件中注入 JS/CSS。以 Chic 主题的 `layout/_partial/head.ejs` 和 `layout/_partial/footer.ejs` 为例：
-
-**`layout/_partial/head.ejs` 中 `</head>` 前添加：**
-
-```html
-<link rel="stylesheet" href="/css/agent-widget.css">
-```
-
-**`layout/_partial/footer.ejs` 中 `</body>` 前添加：**
-
-```html
-<script src="/js/agent-widget.js"></script>
-```
-
-#### 5d. 重新构建并部署 Hexo
-
-```bash
+# 重新构建并部署 Hexo
 hexo clean && hexo generate && hexo deploy
 ```
 
-### 第六步：申请 GitHub OAuth App
+### 第五步：申请 GitHub OAuth App
 
 1. 登录 GitHub → **Settings** → **Developer settings** → **OAuth Apps**
 2. 点 **New OAuth App** 或修改现有 App
 3. 填写：
-   - **Homepage URL**: `https://xn--ljhfjm-dl0o.top`
+   - **Homepage URL**: `https://你的域名`
    - **Authorization callback URL**: `http://<服务器IP>:8001/static/oauth-callback.html`
 4. 拿到 Client ID 和 Client Secret 后更新 `.env`
 
@@ -287,55 +587,16 @@ hexo clean && hexo generate && hexo deploy
 | `DASHSCOPE_API_KEY` | ✅ | - | DashScope Embedding API Key |
 | `ALLOWED_ORIGINS` | ✅ | - | CORS 白名单（逗号分隔） |
 | `BLOG_BASE_URL` | ✅ | - | 博客域名（生成文章链接） |
+| `HEXO_THEME_PATH` | ✅ | - | Hexo 主题本地路径（sync-widget.sh 用） |
+| `BLOG_ARTICLES_DIR` | - | - | 博文源码目录（sync_articles.py 用） |
 | `GIT_SYNC_ENABLED` | - | `false` | 是否启用 Git 自动轮询同步 |
 | `GIT_REPO_URL` | - | - | 备用 GitHub 仓库 URL |
-| `GIT_POSTS_PATH` | - | `source/_posts/` | 仓库中博文路径 |
-| `GIT_POLL_INTERVAL_MINUTES` | - | `30` | Git 同步间隔（分钟） |
-
----
-
-## 📝 手动导入博文
-
-```bash
-# 本地开发
-cd agent-service
-python ../scripts/import_articles.py /path/to/hexo/source/_posts
-
-# 强制重新导入所有文章
-python ../scripts/import_articles.py /path/to/hexo/source/_posts --force
-
-# 清空知识库
-python ../scripts/import_articles.py --clear
-
-# Docker 中使用
-docker exec hexo-agent-service python scripts/import_articles.py /data/blog-repo/source/_posts
-```
-
----
-
-## 🎯 功能特性
-
-### 知识库问答 (RAG)
-- 博文分块 → DashScope embedding → pgvector 存储
-- 语义检索 top-3 + 阈值 0.45
-- 结合 DeepSeek 生成回答，带可点击链接
-
-### 对话记忆
-- **短期记忆**：Redis LIST 保存最近 5 轮对话
-- **语义记忆**：每 5 轮触发 batch embedding（仅嵌入用户消息）
-- **混合检索**：Redis 近期 + pgvector 语义 top-3
-- 前端徽章："🧠 回忆了 X 个话题"（5 秒消失）
-
-### 用户体系
-- **匿名游客**：IP 限流 10次/天，仅知识库
-- **GitHub 登录**：user_id 限流 100次/天，全功能
-- JWT Token（HS256，7 天有效期）
-- 前端配额显示：🟡游客·剩余X次 / 🟢已登录·剩余X次
-
-### 会话管理
-- 软删除 + 30 天自动过期
-- 每天凌晨 3 点清理
-- 用户可手动清除历史会话
+| `BAIDU_SEARCH_API_KEY` | - | - | 百度千帆搜索 API Key |
+| `REACT_MAX_ITERATIONS` | - | `5` | ReAct Agent 最大迭代次数 |
+| `HISTORY_LIMIT` | - | `3` | 对话历史轮数 |
+| `SERVER_HOST` | - | - | agent.sh 远程模式服务器地址 |
+| `SERVER_USER` | - | `root` | agent.sh 远程模式 SSH 用户 |
+| `SERVER_PROJECT_PATH` | - | `/opt/hexo-agent` | 服务器上项目路径 |
 
 ---
 
@@ -353,6 +614,29 @@ docker compose up -d
 # 生产
 docker compose -f docker-compose.prod.yml up -d
 ```
+
+---
+
+## 🎯 功能特性
+
+### 用户体系
+- **匿名游客**：IP 限流 10次/天，仅知识库
+- **GitHub 登录**：user_id 限流 100次/天，全功能
+- JWT Token（HS256，7 天有效期）
+- 前端配额显示：🟡游客·剩余X次 / 🟢已登录·剩余X次
+
+### 会话管理
+- 软删除 + 30 天自动过期
+- 匿名用户 7 天自动清理
+- 用户可手动清除历史会话
+- 每天凌晨 3 点清理定时触发
+
+### 知识库
+- 博文分块 → DashScope embedding → pgvector 存储
+- 语义检索 top-5 + 阈值 0.45
+- 分类/标签 JSONB GIN 索引筛选
+- LLM 辅助相关性筛选（候选 >3 时触发）
+- 前链接：`BLOG_BASE_URL + /YYYY/MM/DD/ + _posts下相对路径`
 
 ---
 
@@ -386,12 +670,12 @@ docker exec hexo-agent-redis redis-cli DEL "daily_rate:ip:1.2.3.4:2026-05-17"
 
 ## ⚠️ 注意事项
 
-1. **SECRET_KEY 务必更换**：当前 `.env` 中的是测试用，生产用 `openssl rand -hex 32` 生成
+1. **SECRET_KEY 务必更换**：生产用 `openssl rand -hex 32` 生成强随机密钥
 2. **Client Secret 仅显示一次**：申请 OAuth App 后立即保存
 3. **防火墙**：只开放 8001 端口，不要暴露 5432/6379 到公网
 4. **单 worker 模式**：定时任务（cleanup + git_sync）未加分布式锁，生产多 worker 需注意
 5. **Token 无吊销**：JWT 签发后 7 天内有效，暂无黑名单
-6. **ALEMBIC 待加**：数据库迁移目前靠手动执行或 `create_all`
+6. **Docker root 用户**：当前容器以 root 运行，后续建议加 `USER appuser`
 
 ---
 
@@ -399,10 +683,11 @@ docker exec hexo-agent-redis redis-cli DEL "daily_rate:ip:1.2.3.4:2026-05-17"
 
 - [ ] 知识库管理后台
 - [ ] Token 吊销机制（Redis 黑名单）
-- [ ] 登录限流（rate:auth:{ip}）
+- [ ] Docker 非 root 用户运行
 - [ ] Alembic 数据库迁移
 - [ ] 生产监控（Prometheus + Grafana）
 - [ ] 多 worker 分布式锁
+- [ ] LLM 响应缓存
 
 ---
 
