@@ -22,6 +22,11 @@ HEXO_THEME_DIR="${HEXO_THEME_DIR:-/mnt/c/Users/22923/Desktop/blog/themes/Chic}"
 HEXO_THEME_JS="$HEXO_THEME_DIR/source/js/agent-widget.js"
 HEXO_THEME_CSS="$HEXO_THEME_DIR/source/css/agent-widget.css"
 
+# 博客 source/ 目录（覆盖 Hexo 自带的副本，防止旧版覆盖主题）
+HEXO_BLOG_DIR="$(dirname "$(dirname "$HEXO_THEME_DIR")")"
+HEXO_BLOG_JS="$HEXO_BLOG_DIR/source/js/agent-widget.js"
+HEXO_BLOG_CSS="$HEXO_BLOG_DIR/source/css/agent-widget.css"
+
 # hexo-widget NPM 包源码
 WIDGET_JS="$PROJECT_DIR/hexo-widget/source/js/agent-widget.js"
 WIDGET_CSS="$PROJECT_DIR/hexo-widget/source/css/agent-widget.css"
@@ -40,6 +45,8 @@ fi
 
 cp "$SRC_JS" "$HEXO_THEME_JS" && echo "✅ JS → Chic 主题"
 cp "$SRC_CSS" "$HEXO_THEME_CSS" && echo "✅ CSS → Chic 主题"
+cp "$SRC_JS" "$HEXO_BLOG_JS" && echo "✅ JS → 博客 source/"
+cp "$SRC_CSS" "$HEXO_BLOG_CSS" && echo "✅ CSS → 博客 source/"
 cp "$SRC_JS" "$WIDGET_JS" && echo "✅ JS → hexo-widget"
 cp "$SRC_CSS" "$WIDGET_CSS" && echo "✅ CSS → hexo-widget"
 
