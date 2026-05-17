@@ -113,8 +113,9 @@ def scan_articles(articles_dir: str) -> List[Dict]:
             tags = normalize_tags(fm.get("tags"))
             content_hash = hashlib.md5(content.encode()).hexdigest()
 
-            # 优先使用 date 作为稳定 key
-            stable_key = date_str if date_str else f"nodate:{Path(fname).stem}"
+            # key = date + 文件路径 hash（避免同日期文章冲突）
+            path_hash = hashlib.md5(filepath.encode()).hexdigest()[:8]
+            stable_key = f"{date_str}_{path_hash}" if date_str else f"nodate:{Path(fname).stem}_{path_hash}"
 
             articles.append({
                 "key": stable_key,
