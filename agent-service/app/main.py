@@ -21,6 +21,7 @@ from app.config import settings
 from app.core.database import init_db, close_db
 from app.core.redis import init_redis, close_redis
 from app.core.cleanup import _cleanup_loop
+from app.core.git_sync import _git_sync_loop
 
 # 导入路由
 from app.api.auth import router as auth_router
@@ -30,6 +31,7 @@ from app.api.search import router as search_router
 
 
 cleanup_task: Optional[asyncio.Task] = None
+git_sync_task: Optional[asyncio.Task] = None
 
 
 @asynccontextmanager
@@ -37,10 +39,10 @@ async def lifespan(app: FastAPI):
     """
     应用生命周期管理
 
-    启动时：初始化数据库连接、Redis 连接，启动定时清理任务
-    关闭时：清理资源，关闭清理任务
+    启动时：初始化数据库连接、Redis 连接，启动定时清理任务 + Git 同步任务
+    关闭时：清理资源，关闭后台任务
     """
-    global cleanup_task
+    global cleanup_task, git_sync_task
 
     # ========== 启动 ==========
     logger.info("🚀 启动 Hexo Agent Service...")
@@ -57,10 +59,26 @@ async def lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(_cleanup_loop())
     logger.info("✅ 定时清理任务已启动")
 
+    # 启动后台 Git 博文同步任务（仅当 GIT_SYNC_ENABLED=true 时）
+    if settings.GIT_SYNC_ENABLED and settings.GIT_REPO_URL:
+        git_sync_task = asyncio.create_task(_git_sync_loop())
+        logger.info(f"✅ Git 博文同步任务已启动（间隔 {settings.GIT_POLL_INTERVAL_MINUTES} 分钟）")
+    else:
+        logger.info("ℹ️  Git 博文同步未启用（手动模式，使用 scripts/import_articles.py）")
+
     yield
 
     # ========== 关闭 ==========
     logger.info("👋 关闭 Hexo Agent Service...")
+
+    # 关闭 Git 同步任务
+    if git_sync_task:
+        git_sync_task.cancel()
+        try:
+            await git_sync_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("Git 同步任务已关闭")
 
     # 关闭定时清理任务
     if cleanup_task:

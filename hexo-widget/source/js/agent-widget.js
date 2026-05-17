@@ -241,7 +241,7 @@
                       '- 每天 100 次提问\n' +
                       '- 联网搜索 + 深度推理\n' +
                       '- 对话记忆与历史回顾\n\n' +
-                      '点击下方按钮登录吧 👇';
+                      '点击右上方的按钮进行登录吧 👇';
         }
         var messagesEl = $('#agentMessages');
         var messageEl = document.createElement('div');

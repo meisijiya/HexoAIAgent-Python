@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
-批量导入文章脚本（增量版）
+批量导入文章脚本（生产版）
 
-支持：
-- 增量导入：只导入新文章
-- 更新检测：检测文章内容是否修改，如果修改则重新向量化
-- 强制重新导入：--force 参数
-- 清除所有文章：--clear 参数
+增量导入 Hexo 博文到知识库（pgvector + DashScope embedding）
+适用场景：手动/定时同步博文，无需启动 Git 自动轮询
+
+用法：
+  python scripts/import_articles.py /path/to/blog/source/_posts          # 增量导入
+  python scripts/import_articles.py /path/to/blog/source/_posts --force  # 全量重导
+  python scripts/import_articles.py --clear                              # 清空知识库
+  python scripts/import_articles.py --help                                # 帮助
+
+Docker 中使用：
+  docker exec hexo-agent-service python scripts/import_articles.py /data/blog-repo/source/_posts
 """
 import os
 import re
@@ -16,9 +22,12 @@ import json
 import hashlib
 import requests
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
-API_BASE = "http://localhost:8001"
+# API 地址：本地开发用 localhost:8001，生产服务器用实际 IP
+API_BASE = os.environ.get("AGENT_API_BASE", "http://localhost:8001")
+# 博客域名（用于生成文章链接）
+BLOG_BASE_URL = os.environ.get("BLOG_BASE_URL", "https://xn--ljhfjm-dl0o.top")
 
 
 def get_token() -> str:
@@ -65,15 +74,15 @@ def normalize_categories(categories: Any) -> List[str]:
 
 
 def normalize_tags(tags: Any) -> List[str]:
-    """标准化 tags 格式"""
+    """标准化 tags 格式（转为小写以支持大小写不敏感搜索）"""
     if not tags:
         return []
     
     if isinstance(tags, str):
-        return [tags]
+        return [tags.lower()]
     
     if isinstance(tags, list):
-        return [str(tag) for tag in tags]
+        return [str(tag).lower() for tag in tags]
     
     return []
 
@@ -109,10 +118,32 @@ def read_markdown_file(file_path: str) -> Dict:
     # 计算内容 hash（用于检测修改）
     content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
     
+    # 构造博客文章 URL
+    # 优先级：permalink/url > abbrlink > date + 文件在 _posts 下的相对路径
+    permalink = frontmatter.get("permalink") or frontmatter.get("url")
+    if permalink:
+        blog_url = BLOG_BASE_URL.rstrip("/") + "/" + str(permalink).strip("/")
+    else:
+        abbrlink = frontmatter.get("abbrlink")
+        if abbrlink:
+            blog_url = f"{BLOG_BASE_URL.rstrip('/')}/{abbrlink}"
+        else:
+            date_str = str(frontmatter.get("date", ""))
+            if date_str:
+                from datetime import datetime as dt_parse
+                try:
+                    dt = dt_parse.fromisoformat(date_str.replace("Z", "+00:00"))
+                    url_date = dt.strftime("%Y/%m/%d")
+                    blog_url = f"{BLOG_BASE_URL.rstrip('/')}/{url_date}/{relative_path}/"
+                except Exception:
+                    blog_url = f"{BLOG_BASE_URL.rstrip('/')}/{relative_path}/"
+            else:
+                blog_url = f"{BLOG_BASE_URL.rstrip('/')}/{relative_path}/"
+    
     return {
         "title": title,
         "content": content,
-        "url": f"file://{os.path.abspath(file_path)}",
+        "url": blog_url,
         "source": "blog",
         "categories": categories,
         "tags": tags,
@@ -428,4 +459,7 @@ def main():
 
 
 if __name__ == "__main__":
+    print(f"🔗 API 地址: {API_BASE}")
+    print(f"🌐 博客域名: {BLOG_BASE_URL}")
+    print()
     main()

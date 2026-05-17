@@ -112,7 +112,7 @@ def normalize_categories(categories: Any) -> List[str]:
 
 def normalize_tags(tags: Any) -> List[str]:
     """
-    标准化 tags 格式
+    标准化 tags 格式（转为小写以支持大小写不敏感搜索）
     
     支持的格式：
     1. 列表: ["Redis", "分布式锁"]
@@ -122,19 +122,17 @@ def normalize_tags(tags: Any) -> List[str]:
         tags: 原始 tags 数据
     
     Returns:
-        List[str]: 标准化后的标签列表
+        List[str]: 标准化后的标签列表（全小写）
     """
     
     if not tags:
         return []
     
-    # 单个字符串
     if isinstance(tags, str):
-        return [tags]
+        return [tags.lower()]
     
-    # 列表格式
     if isinstance(tags, list):
-        return [str(tag) for tag in tags]
+        return [str(tag).lower() for tag in tags]
     
     return []
 

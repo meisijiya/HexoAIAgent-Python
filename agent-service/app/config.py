@@ -61,7 +61,16 @@ class Settings(BaseSettings):
     EMBEDDING_DIMENSION: int = 1024
     
     # ==================== CORS 配置 ====================
-    ALLOWED_ORIGINS: str = "http://localhost:3000,https://your-blog.github.io"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:4000,http://localhost:8001,https://your-blog.github.io,http://YOUR_SERVER_IP:8001"
+    
+    # ==================== 博客配置 ====================
+    BLOG_BASE_URL: str = "https://meisijiya.github.io"  # GitHub Pages 博客域名
+    
+    # ==================== Git 博文同步配置 ====================
+    GIT_SYNC_ENABLED: bool = False  # 是否启用 Git 自动轮询同步（默认手动模式）
+    GIT_REPO_URL: Optional[str] = None  # 备用 GitHub 仓库 URL
+    GIT_POSTS_PATH: str = "source/_posts/"  # 仓库中博文的相对路径
+    GIT_POLL_INTERVAL_MINUTES: int = 30  # 轮询间隔（分钟）
     
     # ==================== Agent 配置 ====================
     HISTORY_LIMIT: int = 3  # 对话历史轮数（默认 3 轮）

@@ -134,7 +134,10 @@ class ChatAgent:
 用户消息：{message}
 
 只返回JSON，不要其他：
-{{"route":"knowledge|search|react|null","query":"改写查询","reason":"原因"}}"""
+{{"route":"knowledge|search|react|null","query":"改写查询","reason":"原因"}}
+
+如果路由到 knowledge 且用户指定了特定分类(categories)或标签(tags)，额外返回这些字段（数组，可选）：
+例如：{{"route":"knowledge","query":"...","reason":"...","categories":["java"],"tags":["Redis","分布式锁"]}}"""
 
         return prompt
 
@@ -318,8 +321,12 @@ class ChatAgent:
 
             try:
                 if target_route == "knowledge":
+                    filters = {
+                        "categories": route_info.get("categories"),
+                        "tags": route_info.get("tags"),
+                    } if route_info.get("categories") or route_info.get("tags") else None
                     async for chunk in knowledge_agent.process(
-                        query, session_id, stream, db=db
+                        query, session_id, stream, db=db, filters=filters
                     ):
                         yield chunk
                 elif target_route == "search":

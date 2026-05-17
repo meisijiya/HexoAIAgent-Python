@@ -221,7 +221,7 @@
 
     function showWelcome() {
         var content;
-        if (state.token) {
+        if (state.token && !state.isAnonymous) {
             // GitHub 登录用户欢迎语
             content = '🎉 登录成功！我是老江湖，一个皮肤黝黑的技术人。\n\n' +
                       '🔍 **我能做什么：**\n' +

@@ -63,7 +63,9 @@ class Retriever:
         query: str,
         top_k: int = None,
         threshold: float = None,
-        dynamic: bool = True
+        dynamic: bool = True,
+        categories: List[str] = None,
+        tags: List[str] = None,
     ) -> List[SearchResult]:
         """
         搜索与查询最相关的文档片段
@@ -74,6 +76,8 @@ class Retriever:
             top_k: 返回结果数量（如果 dynamic=True，会自动调整）
             threshold: 相似度阈值（如果 dynamic=True，会自动调整）
             dynamic: 是否启用动态调整
+            categories: 可选，按分类过滤（JSONB ?| 操作符）
+            tags: 可选，按标签过滤（JSONB ?| 操作符）
         
         Returns:
             List[SearchResult]: 搜索结果列表
@@ -92,15 +96,29 @@ class Retriever:
         # 查询文本向量化
         query_embedding = await embedding_service.embed_query(query)
         
-        # pgvector 相似度搜索（使用余弦距离）
-        sql = text("""
+        # pgvector 相似度搜索（使用余弦距离，支持分类/标签过滤）
+        filter_clauses = []
+        if categories:
+            escaped = [c.replace("'", "''") for c in categories]
+            filter_clauses.append(f"metadata->'categories' ?| ARRAY{escaped}")
+        if tags:
+            # 大小写不敏感：使用 jsonb_array_elements_text + LOWER
+            escaped = [t.replace("'", "''") for t in tags]
+            conditions = [f"LOWER(elem) = LOWER('{t}')" for t in escaped]
+            filter_clauses.append(
+                f"EXISTS (SELECT 1 FROM jsonb_array_elements_text(metadata->'tags') elem "
+                f"WHERE {' OR '.join(conditions)})"
+            )
+        filter_sql = " AND " + " AND ".join(filter_clauses) if filter_clauses else ""
+
+        sql = text(f"""
             SELECT 
                 CAST(id AS TEXT) as id,
                 content,
                 metadata,
                 1 - (embedding <=> CAST(:query_embedding AS vector)) as similarity
             FROM knowledge_chunks
-            WHERE 1 - (embedding <=> CAST(:query_embedding AS vector)) > :threshold
+            WHERE 1 - (embedding <=> CAST(:query_embedding AS vector)) > :threshold{filter_sql}
             ORDER BY embedding <=> CAST(:query_embedding AS vector)
             LIMIT :top_k
         """)
@@ -108,7 +126,7 @@ class Retriever:
         result = await db.execute(sql, {
             "query_embedding": str(query_embedding),
             "threshold": threshold,
-            "top_k": top_k
+            "top_k": top_k,
         })
         
         rows = result.fetchall()

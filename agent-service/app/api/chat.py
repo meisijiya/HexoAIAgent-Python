@@ -50,6 +50,12 @@ async def delete_session(session_id: str, token: str, db: AsyncSession = Depends
     if not user_id:
         raise HTTPException(status_code=401, detail="无效的 Token")
     
+    # 匿名会话仅存在于 Redis（session_id 非 UUID），直接清理 Redis 即可
+    if session_id.startswith("anon_"):
+        await clear_session_redis(session_id)
+        logger.info(f"已清除匿名会话 {session_id}")
+        return {"ok": True, "deleted_messages": 0, "deleted_memories": 0}
+    
     # 验证会话存在且属于当前用户
     result = await db.execute(
         select(Session).where(
@@ -156,7 +162,8 @@ async def chat(chat_req: ChatRequest, fastapi_request: Request, db: AsyncSession
     session_id = chat_req.session_id
     
     if not is_anonymous:
-        if not session_id:
+        if not session_id or session_id.startswith("anon_"):
+            # 新会话（或清理旧匿名 session_id）
             # 创建新会话
             session = Session(
                 user_id=user_id,

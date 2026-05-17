@@ -10,7 +10,7 @@
 - 使用结构化 Prompt 构建
 - 集成对话历史管理
 """
-from typing import AsyncGenerator, List, Dict, Any
+from typing import AsyncGenerator, List, Dict, Any, Optional
 from loguru import logger
 
 from app.core.llm import llm_client
@@ -20,7 +20,7 @@ from app.knowledge.retriever import retriever, SearchResult
 from app.core.database import async_session_maker
 
 
-# 博客基础 URL（用于生成文章链接）
+# 博客基础 URL（用于生成文章链接，可通过环境变量 BLOG_BASE_URL 覆盖）
 BLOG_BASE_URL = "https://meisijiya.github.io"
 
 
@@ -41,6 +41,7 @@ class KnowledgeAgent:
         session_id: str = None,
         stream: bool = True,
         db=None,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         处理用户消息（Orchestrator 调用入口）
@@ -50,12 +51,13 @@ class KnowledgeAgent:
             session_id: 会话 ID
             stream: 是否流式输出
             db: 数据库会话（用于语义记忆检索）
+            filters: 可选，检索过滤条件 {"categories": [...], "tags": [...]}
             
         Yields:
             Dict[str, Any]: 处理结果
         """
         yield {"type": "routing", "agent": "knowledge", "message": "正在检索知识库..."}
-        async for msg in self.search_and_answer_with_info(message, session_id, stream, db=db):
+        async for msg in self.search_and_answer_with_info(message, session_id, stream, db=db, filters=filters):
              yield msg
     
     async def search_and_answer(
@@ -75,6 +77,7 @@ class KnowledgeAgent:
         session_id: str = None,
         stream: bool = True,
         db=None,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """搜索知识库并生成回答（带详细信息）"""
         logger.info(f"知识库查询: {query[:50]}...")
@@ -84,9 +87,13 @@ class KnowledgeAgent:
         if session_id:
             history = await history_manager.get_history(session_id, query=query, db=db)
         
-        # 2. 检索相关文档
+        # 2. 检索相关文档（支持分类/标签过滤）
+        categories = filters.get("categories") if filters else None
+        tags = filters.get("tags") if filters else None
         async with async_session_maker() as db:
-            search_results = await retriever.search(db, query, dynamic=True)
+            search_results = await retriever.search(
+                db, query, dynamic=True, categories=categories, tags=tags
+            )
         
         # 3. 知识库无匹配或相似度过低 → 提示用户 + fallback 到 LLM 自身知识
         max_score = max((r.score for r in search_results), default=0)
@@ -135,31 +142,27 @@ class KnowledgeAgent:
                 # 提取元数据
                 categories = result.metadata.get("categories", [])
                 tags = result.metadata.get("tags", [])
-                title = result.metadata.get("title", "")
+                title = result.metadata.get("title", "未命名文章")
                 
-                # 生成博客链接（从 metadata 读取 date）
-                blog_url = self._generate_blog_url(source, title, result.metadata)
+                # 博客链接：优先从 metadata 的 _source（已是 blog URL）或 date+title 构建
+                blog_url = result.metadata.get("_source", "")
+                if not blog_url or "file://" in blog_url:
+                    blog_url = self._generate_blog_url_from_metadata(result.metadata, title)
                 
-                # 提取相对路径
-                relative_path = self._extract_relative_path(source)
-                
-                # 构建显示名称（带分类）
-                display_name = relative_path
+                # 显示名称
+                display_name = title
                 if categories:
-                    categories_str = "/".join(categories)
-                    display_name = f"[{categories_str}] {relative_path}"
+                    display_name = f"[{'/'.join(categories)}] {title}"
                 
                 articles_info.append({
                     "index": i,
                     "source": source,
                     "name": display_name,
-                    "relative_path": relative_path,
                     "categories": categories,
                     "tags": tags,
                     "title": title,
                     "score": score,
                     "blog_url": blog_url,
-                    "date": result.metadata.get("date", ""),
                     "preview": result.content[:50] + "..."
                 })
         
@@ -259,6 +262,17 @@ class KnowledgeAgent:
         
         return relative_path
     
+    def _generate_blog_url_from_metadata(self, metadata: dict, title: str) -> str:
+        """从 chunk metadata 构造博客 URL（当 _source 不可用时 fallback）"""
+        date_str = str(metadata.get("date", ""))
+        if date_str and len(date_str) >= 10:
+            parts = date_str[:10].split("-")
+            if len(parts) == 3:
+                from urllib.parse import quote
+                slug = quote(title.strip(), safe="")
+                return f"{BLOG_BASE_URL}/{parts[0]}/{parts[1]}/{parts[2]}/{slug}/"
+        return "#"
+    
     def _build_context(self, results: List[SearchResult]) -> str:
         """
         构建检索上下文（带可点击链接）
@@ -266,24 +280,19 @@ class KnowledgeAgent:
         context_parts = []
         
         for i, result in enumerate(results, 1):
-            source = result.metadata.get("_source", "未知来源")
-            title = result.metadata.get("title", "")
-            relative_path = self._extract_relative_path(source)
+            source = result.metadata.get("_source", "")
+            title = result.metadata.get("title", "未命名文章")
             categories = result.metadata.get("categories", [])
             
-            # 生成博客链接（从 metadata 读取 date）
-            blog_url = self._generate_blog_url(source, title, result.metadata)
+            # 博客链接
+            blog_url = source if (source and "file://" not in source) else self._generate_blog_url_from_metadata(result.metadata, title)
             
-            # 构建来源显示（带链接）
-            if categories:
-                categories_str = "/".join(categories)
-                source_display = f"[{categories_str}] {relative_path}"
-            else:
-                source_display = relative_path
+            # 构建来源显示
+            cats_str = "/".join(categories) if categories else ""
+            display = f"[{cats_str}] {title}" if cats_str else title
             
-            # 使用 Markdown 链接格式
             context_parts.append(
-                f"[参考资料 {i}] (来源: [{source_display}]({blog_url}))\n{result.content}"
+                f"[参考资料 {i}] (来源: [{display}]({blog_url}))\n{result.content}"
             )
         
         return "\n\n".join(context_parts)

@@ -1,0 +1,98 @@
+# ==================== 生产环境部署 ====================
+# 启动: docker compose -f docker-compose.prod.yml up -d
+# 停止: docker compose -f docker-compose.prod.yml down
+# 重建: docker compose -f docker-compose.prod.yml up -d --build agent-service
+# 日志: docker compose -f docker-compose.prod.yml logs -f agent-service
+#
+# 与 docker-compose.yml（开发）的区别：
+# - 无 --reload 热重载
+# - 无源码 volume 挂载（使用镜像内代码）
+# - DEBUG=false
+# - Postgres/Redis 端口不对外暴露（仅内部通信）
+
+version: '3.8'
+
+services:
+  # ==================== PostgreSQL + pgvector ====================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: hexo-agent-postgres
+    environment:
+      POSTGRES_DB: hexo_agent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ChangeMeInProduction!}
+    # 生产环境不对外暴露数据库端口（仅 Docker 网络内通信）
+    # ports:
+    #   - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./agent-service/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - hexo-agent-network
+
+  # ==================== Redis ====================
+  redis:
+    image: redis:7-alpine
+    container_name: hexo-agent-redis
+    # 生产环境不对外暴露 Redis 端口（仅 Docker 网络内通信）
+    # ports:
+    #   - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - hexo-agent-network
+
+  # ==================== Python AI 服务 ====================
+  agent-service:
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
+    container_name: hexo-agent-service
+    ports:
+      - "8001:8000"  # 对外暴露 8001，容器内 8000
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-ChangeMeInProduction!}@postgres:5432/hexo_agent
+      - REDIS_URL=redis://redis:6379/0
+      - DEBUG=false
+    env_file:
+      - ./agent-service/.env  # 可从 .env 覆盖上述环境变量
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # 博文仓库数据持久化（git clone 的备用仓库存在这里）
+      - blog_repo_data:/data/blog-repo
+    # 生产模式：无 --reload，无源码挂载
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    networks:
+      - hexo-agent-network
+
+# ==================== 网络配置 ====================
+networks:
+  hexo-agent-network:
+    driver: bridge
+
+# ==================== 数据卷 ====================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  blog_repo_data:
+    driver: local
+    # 用于存储 git clone 的备用仓库，避免容器重建后丢失

@@ -1,7 +1,11 @@
 {
-  "active_plan": "/home/ljh2923/opencode-project/Hexo-智能体Agent插件/.sisyphus/plans/anonymous-rate-limit.md",
-  "started_at": "2026-05-16T17:30:00.000Z",
-  "session_ids": ["ses_1cf723969ffenpQW1IHcRtZ5Hd"],
-  "plan_name": "anonymous-rate-limit",
+  "active_plan": null,
+  "completed_plans": [
+    "memory-system-overhaul",
+    "clear-session-history", 
+    "anonymous-rate-limit"
+  ],
+  "last_session": "ses_1cf723969ffenpQW1IHcRtZ5Hd",
+  "completed_at": "2026-05-17T00:50:00.000Z",
   "worktree_path": null
 }

@@ -8,13 +8,15 @@
 - 知识库搜索
 - 知识库问答
 """
+import re
 import uuid
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, text as sa_text
+from sqlalchemy.orm import joinedload
 from pydantic import BaseModel
 from loguru import logger
 import json
@@ -85,8 +87,9 @@ async def create_article(article: ArticleCreate, db: AsyncSession = Depends(get_
         db.add(db_article)
         await db.flush()
         
-        # 分块
-        chunks = chunk_markdown(article.content, file_path=article.url or article.title)
+        # 剥离 front-matter 后再分块（避免 YAML 元数据被嵌入向量）
+        body = re.sub(r'^---\s*\n.*?\n---\s*\n', '', article.content, flags=re.DOTALL)
+        chunks = chunk_markdown(body, file_path=article.url or article.title)
         
         # 批量生成向量
         texts = [c["content"] for c in chunks]
@@ -151,10 +154,63 @@ async def delete_article(article_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/articles")
-async def list_articles(skip: int = 0, limit: int = 20, db: AsyncSession = Depends(get_db)):
+async def list_articles(
+    skip: int = 0,
+    limit: int = 20,
+    category: Optional[str] = None,
+    tag: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
     """
-    获取文章列表
+    获取文章列表，支持按分类/标签筛选
+
+    筛选走 knowledge_chunks.metadata JSONB GIN 索引，不走向量检索。
+    
+    Args:
+        skip: 分页偏移
+        limit: 每页数量
+        category: 可选，按分类筛选（匹配任一）
+        tag: 可选，按标签筛选（匹配任一）
     """
+    if category or tag:
+        filter_clauses = []
+        params = {"skip": skip, "limit": limit}
+
+        if category:
+            escaped = category.replace("'", "''")
+            filter_clauses.append(f"c.metadata->'categories' ?| ARRAY['{escaped}']")
+        if tag:
+            escaped = tag.replace("'", "''")
+            filter_clauses.append(
+                f"EXISTS (SELECT 1 FROM jsonb_array_elements_text(c.metadata->'tags') elem "
+                f"WHERE LOWER(elem) = LOWER('{escaped}'))"
+            )
+
+        sql = sa_text(f"""
+            SELECT DISTINCT ON (a.id)
+                a.id, a.title, a.url, a.source, a.created_at,
+                c.metadata->'categories' as categories,
+                c.metadata->'tags' as tags
+            FROM knowledge_articles a
+            JOIN knowledge_chunks c ON c.article_id = a.id
+            WHERE {' AND '.join(filter_clauses)}
+            ORDER BY a.id, a.created_at DESC
+            OFFSET :skip LIMIT :limit
+        """)
+        result = await db.execute(sql, params)
+        rows = result.fetchall()
+
+        return [{
+            "id": str(row.id),
+            "title": row.title,
+            "url": row.url,
+            "source": row.source,
+            "categories": list(row.categories) if row.categories else [],
+            "tags": list(row.tags) if row.tags else [],
+            "created_at": row.created_at.isoformat() if row.created_at else None
+        } for row in rows]
+
+    # 无筛选参数 → 走原逻辑
     result = await db.execute(
         select(Article)
         .order_by(Article.created_at.desc())
@@ -162,14 +218,14 @@ async def list_articles(skip: int = 0, limit: int = 20, db: AsyncSession = Depen
         .limit(limit)
     )
     articles = result.scalars().all()
-    
+
     return [
         {
             "id": str(article.id),
             "title": article.title,
             "url": article.url,
             "source": article.source,
-            "created_at": article.created_at.isoformat()
+            "created_at": article.created_at.isoformat() if article.created_at else None
         }
         for article in articles
     ]
