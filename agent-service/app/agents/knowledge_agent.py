@@ -95,6 +95,10 @@ class KnowledgeAgent:
                 db, query, dynamic=True, categories=categories, tags=tags
             )
         
+        # 2.5 LLM 辅助相关性筛选（有过滤条件且候选结果 > 3 时，让 LLM 挑真正相关的）
+        if (categories or tags) and len(search_results) > 3:
+            search_results = await self._llm_filter_relevant(search_results, query)
+        
         # 3. 知识库无匹配或相似度过低 → 尝试分类/标签列表（如有过滤条件）
         max_score = max((r.score for r in search_results), default=0)
         if (not search_results or max_score < 0.6) and (categories or tags):
@@ -307,6 +311,66 @@ class KnowledgeAgent:
         
         return relative_path
     
+    async def _llm_filter_relevant(self, results, query):
+        """
+        LLM 辅助相关性筛选：从语义搜索候选集中挑出真正相关的文章
+
+        触发条件：用户指定了分类/标签过滤，且候选结果 > 3 个时。
+        向量余弦相似度只能反映"文本像不像"，但无法理解用户真正意图。
+        LLM 可以判断"java分类下分布式锁"应该保留《06-分布式锁》
+        而丢弃《Mybatis快速上手》，即使两者都包含 Java 相关词汇。
+
+        Token 消耗：~200 in / ~20 out，轻量调用。
+
+        Args:
+            results: 语义搜索候选结果 (List[SearchResult])
+            query: 用户原始问题
+
+        Returns:
+            过滤后的结果列表
+        """
+        # 构建候选清单：序号 + 标题 + 简短摘要
+        candidates = []
+        index_map = {}  # 候选序号 → 原 SearchResult
+        seen_titles = set()
+        for i, r in enumerate(results):
+            title = r.metadata.get("title", "")
+            if title in seen_titles:
+                continue
+            seen_titles.add(title)
+            idx = len(candidates)
+            candidates.append(f"{idx}: {title}（摘要：{r.content[:60]}...）")
+            index_map[idx] = r
+
+        if len(candidates) <= 3:
+            return results  # ≤3 个候选，没必要让 LLM 筛
+
+        prompt = f"""你是相关性筛选器。用户问了：「{query}」
+
+候选文章列表（格式：序号: 标题（摘要））：
+{chr(10).join(candidates)}
+
+请只返回真正与用户问题相关的文章序号（用逗号分隔，如 0,2,5）。
+无关的不要返回。如果全都不相关，返回空。
+只返回序号，不要其他内容。"""
+
+        try:
+            response = await llm_client.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=50
+            )
+            # 解析 LLM 返回的序号列表
+            import re
+            indices = [int(n) for n in re.findall(r'\d+', response)]
+            filtered = [index_map[i] for i in indices if i in index_map]
+            if filtered:
+                logger.info(f"LLM 筛选：{len(results)} → {len(filtered)} 条相关结果")
+                return filtered
+        except Exception as e:
+            logger.warning(f"LLM 筛选失败，回退到全量结果: {e}")
+
+        return results  # 失败或全不相关时回退
+
     def _generate_blog_url_from_metadata(self, metadata: dict, title: str) -> str:
         """从 chunk metadata 构造博客 URL（当 _source 不可用时 fallback）"""
         date_str = str(metadata.get("date", ""))
