@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:4000,http://localhost:8001,https://your-blog.github.io,http://YOUR_SERVER_IP:8001"
     
     # ==================== 博客配置 ====================
-    BLOG_BASE_URL: str = "https://meisijiya.github.io"  # GitHub Pages 博客域名
+    BLOG_BASE_URL: str = ""  # 博客域名（生产环境必须配置，如 https://your-blog.com）
     
     # ==================== Git 博文同步配置 ====================
     GIT_SYNC_ENABLED: bool = False  # 是否启用 Git 自动轮询同步（默认手动模式）

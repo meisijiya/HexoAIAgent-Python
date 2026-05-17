@@ -18,10 +18,11 @@ from app.core.prompt_builder import knowledge_prompt_builder
 from app.core.history_manager import history_manager
 from app.knowledge.retriever import retriever, SearchResult
 from app.core.database import async_session_maker
+from app.config import settings
 
 
-# 博客基础 URL（用于生成文章链接，可通过环境变量 BLOG_BASE_URL 覆盖）
-BLOG_BASE_URL = "https://meisijiya.github.io"
+# 博客基础 URL（从环境变量 BLOG_BASE_URL 读取）
+BLOG_BASE_URL = settings.BLOG_BASE_URL or "https://meisijiya.github.io"
 
 
 class KnowledgeAgent:
