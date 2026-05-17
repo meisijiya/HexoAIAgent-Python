@@ -1,7 +1,11 @@
 #!/bin/bash
 # ===============================================================
 # Hexo Agent 交互式运维脚手架
-# 用法: bash scripts/agent.sh  或  ./scripts/agent.sh
+# 用法: bash scripts/agent.sh
+# 
+# 自动检测环境：
+#   - 本地有 Docker → 直接执行 Docker 命令
+#   - 本地无 Docker → SSH 到服务器执行（需配置 SERVER_HOST）
 # ===============================================================
 set -e
 
@@ -15,11 +19,38 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# ── 环境检测 ──
+ENV_FILE="$PROJECT_DIR/agent-service/.env"
+SERVER_HOST=$(grep -oP 'SERVER_HOST=\K.*' "$ENV_FILE" 2>/dev/null | tr -d '"' | tr -d "'" || echo "")
+SERVER_USER=$(grep -oP 'SERVER_USER=\K.*' "$ENV_FILE" 2>/dev/null | tr -d '"' | tr -d "'" || echo "root")
+SERVER_PROJECT=$(grep -oP 'SERVER_PROJECT_PATH=\K.*' "$ENV_FILE" 2>/dev/null | tr -d '"' | tr -d "'" || echo "/opt/hexo-agent")
+
+HAS_DOCKER=$(docker info &>/dev/null && echo "yes" || echo "no")
+
+if [ "$HAS_DOCKER" == "yes" ]; then
+    MODE="本地"
+    REMOTE_PREFIX=""
+else
+    MODE="远程"
+    if [ -z "$SERVER_HOST" ]; then
+        echo -e "${RED}❌ 本地无 Docker 且未配置 SERVER_HOST（agent-service/.env）${NC}"
+        echo "   请在 .env 中添加: SERVER_HOST=你的服务器IP"
+        exit 1
+    fi
+    REMOTE_PREFIX="ssh $SERVER_USER@$SERVER_HOST"
+fi
+
 # ── 辅助函数 ──
 banner() {
     clear
     echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║       🤖 Hexo Agent 运维脚手架           ║${NC}"
+    echo -e "${CYAN}╠══════════════════════════════════════════╣${NC}"
+    if [ "$MODE" == "远程" ]; then
+        echo -e "${CYAN}║  🌐 远程模式 → $SERVER_USER@$SERVER_HOST${NC}"
+    else
+        echo -e "${CYAN}║  💻 本地模式${NC}"
+    fi
     echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
     echo ""
 }
@@ -43,42 +74,58 @@ menu() {
 }
 
 # ── Docker 操作 ──
-cmd_start()    { docker compose up -d; }
-cmd_stop()     { docker compose down; }
-cmd_restart()  { docker compose restart agent-service; }
-cmd_logs()     { docker compose logs -f agent-service; }
-cmd_shell()    { docker exec -it hexo-agent-service bash; }
-cmd_health()   { curl -s http://localhost:8001/health | python3 -m json.tool; }
-cmd_rebuild()  { docker compose up -d --build agent-service; }
+cmd_start()    { $REMOTE_PREFIX "cd $SERVER_PROJECT && docker compose -f docker-compose.prod.yml up -d"; }
+cmd_stop()     { $REMOTE_PREFIX "cd $SERVER_PROJECT && docker compose -f docker-compose.prod.yml down"; }
+cmd_restart()  { $REMOTE_PREFIX "cd $SERVER_PROJECT && docker compose -f docker-compose.prod.yml restart agent-service"; }
+cmd_logs()     { $REMOTE_PREFIX "cd $SERVER_PROJECT && docker compose -f docker-compose.prod.yml logs -f agent-service"; }
+cmd_shell()    { $REMOTE_PREFIX -t "cd $SERVER_PROJECT && docker exec -it hexo-agent-service bash"; }
+cmd_health()   { $REMOTE_PREFIX "curl -s http://localhost:8001/health" | python3 -m json.tool; }
+cmd_rebuild()  { $REMOTE_PREFIX "cd $SERVER_PROJECT && docker compose -f docker-compose.prod.yml up -d --build agent-service"; }
 
 # ── 知识库同步 ──
 cmd_sync() {
-    echo "" && python3 scripts/sync_articles.py
+    if [ "$MODE" == "远程" ]; then
+        $REMOTE_PREFIX -t "cd $SERVER_PROJECT && python3 scripts/sync_articles.py"
+    else
+        echo "" && python3 scripts/sync_articles.py
+    fi
 }
 cmd_reset() {
-    echo "" && python3 scripts/sync_articles.py --reset
+    if [ "$MODE" == "远程" ]; then
+        $REMOTE_PREFIX -t "cd $SERVER_PROJECT && python3 scripts/sync_articles.py --reset"
+    else
+        echo "" && python3 scripts/sync_articles.py --reset
+    fi
 }
 cmd_dry() {
-    echo "" && python3 scripts/sync_articles.py --dry-run
+    if [ "$MODE" == "远程" ]; then
+        $REMOTE_PREFIX -t "cd $SERVER_PROJECT && python3 scripts/sync_articles.py --dry-run"
+    else
+        echo "" && python3 scripts/sync_articles.py --dry-run
+    fi
 }
 cmd_import() {
-    dir="${BLOG_ARTICLES_DIR:-/mnt/c/Users/22923/Desktop/blog/source/_posts}"
-    echo -e "${YELLOW}文章目录: $dir${NC}"
-    echo "" && python3 scripts/import_articles.py "$dir"
+    if [ "$MODE" == "远程" ]; then
+        $REMOTE_PREFIX -t "cd $SERVER_PROJECT && python3 scripts/import_articles.py"
+    else
+        dir="${BLOG_ARTICLES_DIR:-/mnt/c/Users/22923/Desktop/blog/source/_posts}"
+        echo -e "${YELLOW}文章目录: $dir${NC}"
+        echo "" && python3 scripts/import_articles.py "$dir"
+    fi
 }
 
-# ── 前端 ──
+# ── 前端（始终本地执行） ──
 cmd_widget() {
     bash scripts/sync-widget.sh
 }
 
 # ── 其他 ──
 cmd_cleanup() {
-    docker exec hexo-agent-service python3 -c "
+    $REMOTE_PREFIX "cd $SERVER_PROJECT && docker exec hexo-agent-service python3 -c \"
 import asyncio
 from app.core.cleanup import run_cleanup
 asyncio.run(run_cleanup())
-" && echo -e "${GREEN}✅ 清理完成${NC}"
+\"" && echo -e "${GREEN}✅ 清理完成${NC}"
 }
 
 # ── 主循环 ──
