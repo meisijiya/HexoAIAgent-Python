@@ -353,10 +353,6 @@
         bar.innerHTML = '<span class="sources-bar-label">📚 ' + escapeHtml(data.message.split('，')[0]) + '</span>' + items;
         bar.style.display = 'block';
     }
-        });
-        html += '</ul>';
-        addMessage('assistant', html, { className: 'sources' });
-    }
 
     function addSearchOptions(data) {
         let html = `<div class="hexo-agent-search-options">`;
@@ -971,8 +967,7 @@
                         updateUI();
                         addMessage('system', 'GitHub 登录成功！');
                     });
-                return;
-            }
+            } else if (e.data && e.data.type === 'github-oauth-error') {
                 addMessage('system', 'GitHub 登录失败：' + (e.data.error || '未知错误'));
             }
         });
